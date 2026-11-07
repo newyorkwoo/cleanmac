@@ -5,6 +5,16 @@ import XCTest
 /// Read-only smoke run against this Mac's real data. Deletes nothing.
 /// Runs only when CLEANMAC_REAL_SCAN=1.
 final class RealScanReport: XCTestCase {
+    func testUninstallLeftoversReport() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CLEANMAC_REAL_SCAN"] == "1")
+        for app in AppInventory.scan() {
+            let items = AppInventory.leftovers(for: app)
+            let system = items.filter(\.isSystem)
+            print("[\(app.bundleID)] \(items.count) leftovers, \(system.count) system")
+            for item in system { print("  \(item.url.path)") }
+        }
+    }
+
     func testReport() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["CLEANMAC_REAL_SCAN"] == "1")
         let home = FileManager.default.homeDirectoryForCurrentUser

@@ -15,6 +15,25 @@ public struct LeftoverItem: Identifiable, Hashable, Sendable {
     public var id: String { url.path }
     public let url: URL
     public let size: Int64
+    /// Outside the home folder, so removing it takes an administrator password.
+    public var isSystem = false
+}
+
+/// The parts of a launchd plist that tie a job to an app or are needed to stop it.
+struct LaunchJob {
+    let label: String
+    let program: String?
+    let bundleIDs: [String]
+
+    init?(url: URL) {
+        guard url.pathExtension.lowercased() == "plist", let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let label = plist["Label"] as? String else { return nil }
+        self.label = label
+        program = (plist["Program"] as? String) ?? (plist["ProgramArguments"] as? [String])?.first
+        let associated = plist["AssociatedBundleIdentifiers"]
+        bundleIDs = ((associated as? [String]) ?? (associated as? String).map { [$0] } ?? []).map { $0.lowercased() }
+    }
 }
 
 public enum AppInventory {
@@ -68,43 +87,128 @@ public enum AppInventory {
     }
 
     /// Finds data belonging to an app. Matching stays strict (the exact bundle ID, its
-    /// children, or the exact app name) so other apps' data is not swept up.
-    public static func leftovers(for app: AppInfo, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [LeftoverItem] {
+    /// children, the exact app name, or a launchd job that names the app) so other apps' data
+    /// is not swept up. Apple's apps get no system-level matches, since those folders are the OS's.
+    public static func leftovers(
+        for app: AppInfo,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        systemRoot: URL = URL(fileURLWithPath: "/Library")
+    ) -> [LeftoverItem] {
         let id = app.bundleID.lowercased()
         let appName = app.url.deletingPathExtension().lastPathComponent.lowercased()
+        let isApple = id.hasPrefix("com.apple.")
         // Short IDs and Apple's shared namespace are matched exactly, never by prefix.
-        let allowPrefix = id.split(separator: ".").count >= 3 && !id.hasPrefix("com.apple.")
+        let allowPrefix = id.split(separator: ".").count >= 3 && !isApple
+        let nameFolders: Set<String> = ["Application Support", "Caches", "Logs"]
 
         func matchesID(_ candidate: String) -> Bool {
             candidate == id || (allowPrefix && candidate.hasPrefix(id + "."))
         }
 
-        let idFolders = [
-            "Library/Application Support", "Library/Caches", "Library/Containers", "Library/Application Scripts",
-            "Library/HTTPStorages", "Library/WebKit", "Library/Logs", "Library/Saved Application State",
-            "Library/Preferences", "Library/Cookies", "Library/LaunchAgents",
-        ]
-        let nameFolders: Set<String> = ["Library/Application Support", "Library/Caches", "Library/Logs"]
+        func matches(_ url: URL, in folder: String) -> Bool {
+            let raw = url.lastPathComponent.lowercased()
+            let stem = ["plist", "savedstate", "binarycookies"].contains(url.pathExtension.lowercased())
+                ? url.deletingPathExtension().lastPathComponent.lowercased() : raw
+            return matchesID(stem) || (nameFolders.contains(folder) && appName.count >= 4 && raw == appName)
+        }
 
+        let helpers = declaredHelpers(of: app.url)
+
+        func belongsToApp(_ job: LaunchJob) -> Bool {
+            job.program?.hasPrefix(app.url.path + "/") == true || job.bundleIDs.contains(id)
+                || helpers.contains(job.label.lowercased())
+                || job.program.map { helpers.contains(URL(fileURLWithPath: $0).lastPathComponent.lowercased()) } == true
+        }
+
+        let userLibrary = home.appendingPathComponent("Library")
         var found: [URL] = []
-        for folder in idFolders {
-            for url in children(of: home.appendingPathComponent(folder)) {
-                let raw = url.lastPathComponent.lowercased()
-                let stem = ["plist", "savedstate", "binarycookies"].contains(url.pathExtension.lowercased())
-                    ? url.deletingPathExtension().lastPathComponent.lowercased() : raw
-                if matchesID(stem) || (nameFolders.contains(folder) && appName.count >= 4 && raw == appName) {
-                    found.append(url)
+        let userFolders = [
+            "Application Support", "Caches", "Containers", "Application Scripts", "HTTPStorages", "WebKit",
+            "Logs", "Saved Application State", "Preferences", "Cookies", "LaunchAgents",
+        ]
+        for folder in userFolders {
+            for url in children(of: userLibrary.appendingPathComponent(folder)) where matches(url, in: folder) {
+                found.append(url)
+            }
+        }
+        for url in children(of: userLibrary.appendingPathComponent("LaunchAgents")) {
+            if let job = LaunchJob(url: url), belongsToApp(job) { found.append(url) }
+        }
+        // These are named "<team id>.<bundle id>".
+        for folder in ["Group Containers", "Application Scripts"] {
+            for url in children(of: userLibrary.appendingPathComponent(folder))
+            where url.lastPathComponent.lowercased().hasSuffix("." + id) {
+                found.append(url)
+            }
+        }
+        // These are named "<bundle id>.<host UUID>.plist".
+        for url in children(of: userLibrary.appendingPathComponent("Preferences/ByHost")) where url.pathExtension == "plist" {
+            if matchesID(url.deletingPathExtension().deletingPathExtension().lastPathComponent.lowercased()) { found.append(url) }
+        }
+        for folder in ["Logs/DiagnosticReports", "Application Support/CrashReporter"] {
+            for url in children(of: userLibrary.appendingPathComponent(folder))
+            where isCrashReport(url.lastPathComponent.lowercased(), appName: appName) {
+                found.append(url)
+            }
+        }
+
+        var system: [URL] = []
+        if !isApple {
+            for folder in PathGuard.systemFolders {
+                for url in children(of: systemRoot.appendingPathComponent(folder))
+                where matches(url, in: folder) || (folder == "PrivilegedHelperTools" && helpers.contains(url.lastPathComponent.lowercased())) {
+                    system.append(url)
+                }
+            }
+            for folder in PathGuard.launchFolders {
+                for url in children(of: systemRoot.appendingPathComponent(folder)) {
+                    guard let job = LaunchJob(url: url), system.contains(url) || belongsToApp(job) else { continue }
+                    system.append(url)
+                    // A job's helper tool is named after the helper, not the app, so only the job links it to the app.
+                    if let program = job.program { system.append(URL(fileURLWithPath: program)) }
                 }
             }
         }
-        // Group containers are named "<team id>.<bundle id>".
-        for url in children(of: home.appendingPathComponent("Library/Group Containers")) {
-            if url.lastPathComponent.lowercased().hasSuffix("." + id) { found.append(url) }
+        // A job's program can point anywhere, so only what the guard accepts is listed.
+        let systemGuard = PathGuard(home: home, systemRoot: systemRoot)
+        let allowedSystem = system.filter {
+            (try? systemGuard.checkSystemItem($0)) != nil && FileManager.default.fileExists(atPath: $0.path)
         }
 
-        return found
-            .map { LeftoverItem(url: $0, size: FileWalker.allocatedSize(of: $0)) }
-            .sorted { $0.size > $1.size }
+        let userItems = unique(found).map { LeftoverItem(url: $0, size: FileWalker.allocatedSize(of: $0)) }
+        let systemItems = unique(allowedSystem).map { LeftoverItem(url: $0, size: FileWalker.allocatedSize(of: $0), isSystem: true) }
+        return (userItems + systemItems).sorted { $0.size > $1.size }
+    }
+
+    /// Helpers rarely carry the app's bundle ID ("com.docker.vmnetd" for "com.docker.docker"), so vendor
+    /// prefixes would catch other products. These are the names the app's own bundle vouches for:
+    /// its declared privileged helpers, and executables it ships under an identifier-style name.
+    private static func declaredHelpers(of appURL: URL) -> Set<String> {
+        let contents = appURL.appendingPathComponent("Contents")
+        var names: [String] = []
+        if let data = try? Data(contentsOf: contents.appendingPathComponent("Info.plist")),
+           let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+           let declared = info["SMPrivilegedExecutables"] as? [String: Any] {
+            names += declared.keys
+        }
+        for folder in ["MacOS", "Library/LaunchServices"] {
+            names += children(of: contents.appendingPathComponent(folder)).map(\.lastPathComponent)
+                .filter { $0.split(separator: ".").count >= 3 }
+        }
+        return Set(names.map { $0.lowercased() })
+    }
+
+    /// Matches "<app>-2026-01-31-...ips", "<app>_2026-01-31-...crash" and "<app>_<UUID>.plist".
+    /// The date or UUID has to follow directly, which keeps "foo-bar-2026..." away from an app named "foo".
+    private static func isCrashReport(_ name: String, appName: String) -> Bool {
+        guard appName.count >= 4, name.hasPrefix(appName) else { return false }
+        let rest = name.dropFirst(appName.count)
+        return rest.range(of: "^[-_]([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9a-f]{8}-[0-9a-f]{4}-)", options: .regularExpression) != nil
+    }
+
+    private static func unique(_ urls: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        return urls.filter { seen.insert($0.path).inserted }
     }
 
     private static func children(of folder: URL) -> [URL] {

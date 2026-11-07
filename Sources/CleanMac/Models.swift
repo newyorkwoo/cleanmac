@@ -684,13 +684,17 @@ final class AppsModel: ScanModel {
         !NSRunningApplication.runningApplications(withBundleIdentifier: info.bundleID).isEmpty
     }
 
+    /// How many chosen leftovers will need the administrator password.
+    var selectedSystemCount: Int {
+        leftovers.filter { $0.isSystem && selectedLeftovers.contains($0.id) }.count
+    }
+
     @discardableResult func uninstall(_ info: AppInfo) -> Task<Void, Never> {
-        var targets: [(url: URL, size: Int64)] = [(info.url, info.size)]
-        targets += leftovers.filter { selectedLeftovers.contains($0.id) }.map { (url: $0.url, size: $0.size) }
+        let chosenLeftovers = leftovers.filter { selectedLeftovers.contains($0.id) }
         let cleaner = Cleaner(home: app.home)
-        let plan = targets
         return Task {
-            let result = await offMain { cleaner.moveToTrash(plan) }
+            // nil means the password prompt was cancelled, so nothing changed and there is nothing to report.
+            guard let result = await offMain({ cleaner.uninstall(app: (info.url, info.size), leftovers: chosenLeftovers) }) else { return }
             if !result.failures.contains(where: { $0.path == info.url.path }) {
                 apps.removeAll { $0.id == info.id }
                 chosen = nil
