@@ -1,5 +1,7 @@
 # CleanMac
 
+[English](#english)
+
 原生 macOS 清理與優化工具（SwiftUI）。所有處理都在本機進行，不會上傳任何資料。
 
 ## 安裝
@@ -61,3 +63,39 @@ swift test                     # 執行測試
 - 檔案粉碎在 SSD／APFS 上無法保證物理抹除，敏感資料請搭配 FileVault。
 - `purge` 只清除檔案快取。macOS 本來就會自動管理記憶體，效果通常短暫。
 - 內建於 App 中的背景項目（SMAppService）無法在此列出，請到系統設定調整。
+
+## English
+
+A native macOS cleanup and optimization tool built with SwiftUI. Everything runs locally, and no data is uploaded.
+
+### Installation
+
+Requires macOS 14 or later. The disk image on the Releases page supports Apple Silicon (M-series chips) only.
+
+1. Download `CleanMac.dmg` from [Releases](https://github.com/newyorkwoo/cleanmac/releases/latest), open it, and drag CleanMac to the Applications folder.
+2. The app isn't notarized by Apple, so macOS blocks it the first time you open it. Go to System Settings > Privacy & Security and choose Open Anyway.
+3. We recommend adding CleanMac under System Settings > Privacy & Security > Full Disk Access. Without it, the Trash and some app data can't be scanned.
+
+### Language
+
+Use the picker at the bottom left of the sidebar to switch between 繁體中文, 简体中文, 日本語, English, 한국어 and Latina. Your choice is saved, and the first launch follows the system language.
+
+- Translations are in `Sources/CleanMacCore/Translations.swift`, keyed by the Traditional Chinese source text. Wrap new UI text in `L("...")` and add its translations. Tests fail if any are missing.
+- The app's menu bar and system dialogs come from macOS, so they change language only after you reopen the app. macOS has no Latin resources, so these parts appear in English when Latin is selected.
+
+### Features
+
+| Feature | Description |
+| --- | --- |
+| Smart Scan | Checks all selected items at once and shows disk, memory and CPU status |
+| Junk Files | Caches, logs, Xcode and developer tool caches, old installers, iOS backups, and leftovers from removed apps |
+| Large Files | Lists personal files by size or date |
+| Duplicate Files | Compares contents with SHA-256 and keeps at least one copy in each group |
+| Similar Photos | Finds near-identical photos using on-device Vision analysis |
+| Disk Map | Shows space usage as a treemap you can drill into |
+| Memory | Usage, memory pressure, top processes, and running `purge` to free caches |
+| Startup Items | Disables or enables LaunchAgents and LaunchDaemons, and manages login items |
+| Applications | Sorts by name, size or last used, and removes related data when uninstalling |
+| Security Check | SIP, Gatekeeper, FileVault, firewall, software updates, app signatures, and suspicious startup items |
+| File Shredder | Overwrites files with random data, then deletes them |
+| Menu Bar | Shows memory, CPU and disk status at any time |
