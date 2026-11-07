@@ -4,7 +4,15 @@
 
 ## 安裝
 
-已安裝在 `/Applications/CleanMac.app`，可從 Launchpad 或 Spotlight 開啟。需要重新打包時：
+需要 macOS 14 以上版本。Release 提供的安裝映像只支援 Apple Silicon（M 系列晶片）。
+
+1. 到 [Releases](https://github.com/newyorkwoo/cleanmac/releases/latest) 下載 `CleanMac.dmg` 並開啟，把 CleanMac 拖到「應用程式」資料夾。
+2. App 尚未經過 Apple 公證，第一次開啟時 macOS 會阻擋。到「系統設定 > 隱私權與安全性」選擇「強制打開」即可。
+3. 建議到「系統設定 > 隱私權與安全性 > 完整磁碟取用權限」加入 CleanMac，否則垃圾桶和部分 App 資料無法掃瞄。
+
+## 從原始碼建置
+
+建置需要 Xcode 命令列工具。
 
 ```sh
 scripts/package.sh --install   # 建置、產生 dist/CleanMac.dmg 並安裝（請先結束 App）
@@ -12,9 +20,6 @@ scripts/package.sh             # 只產生 .app 和 .dmg
 swift test                     # 執行測試
 ```
 
-建置需要 Xcode 命令列工具，執行需要 macOS 14 以上版本。
-
-建議到「系統設定 > 隱私權與安全性 > 完整磁碟取用權限」加入 CleanMac，否則垃圾桶和部分 App 資料無法掃瞄。
 腳本會用這台 Mac 上的 Apple Development 憑證簽署，所以重新建置後不必重新授權；沒有憑證時會改用臨時簽署。
 這個簽署只適合自己使用：App 未經 Apple 公證，分享給別人時 macOS 會阻擋。
 
