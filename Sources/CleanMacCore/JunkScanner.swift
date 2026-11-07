@@ -7,6 +7,8 @@ public struct JunkItem: Identifiable, Hashable, Sendable {
     public let size: Int64
     /// Belongs to an app that is running now, so it is never preselected.
     public let inUse: Bool
+    /// In /Library, so removing it takes an administrator password.
+    public var isSystem = false
 }
 
 public struct JunkCategory: Identifiable, Sendable {
@@ -39,6 +41,14 @@ public struct JunkScanner: Sendable {
     public let home: URL
     public let runningBundleIDs: Set<String>
     public let isInstalled: @Sendable (String) -> Bool
+    /// Vendors ("com.vendor") with installed software; their data is never called a leftover.
+    public let installedVendors: Set<String>
+    /// Developers (Team IDs) with installed apps; containers they own are never called leftovers.
+    public let installedTeamIDs: Set<String>
+    /// Command-line tools on this Mac, by name.
+    public let installedCommands: Set<String>
+    /// Where system-wide leftovers are looked for. nil leaves /Library out of the scan.
+    public let systemRoot: URL?
 
     private static let browsers: [(path: String, bundleID: String)] = [
         ("Google/Chrome", "com.google.chrome"),
@@ -64,11 +74,20 @@ public struct JunkScanner: Sendable {
     public init(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         runningBundleIDs: [String] = [],
+        installedBundleIDs: Set<String> = [],
+        installedTeamIDs: Set<String> = [],
+        installedCommands: Set<String> = [],
+        systemRoot: URL? = nil,
         isInstalled: @escaping @Sendable (String) -> Bool
     ) {
         self.home = home
         self.runningBundleIDs = Set(runningBundleIDs.map { $0.lowercased() })
         self.isInstalled = isInstalled
+        self.installedVendors = Set((installedBundleIDs.map { $0.lowercased() } + runningBundleIDs.map { $0.lowercased() })
+            .map(AppInventory.vendor(of:)))
+        self.installedTeamIDs = installedTeamIDs
+        self.installedCommands = installedCommands
+        self.systemRoot = systemRoot
     }
 
     public func scan(progress: ProgressHandler? = nil) -> [JunkCategory] {
@@ -157,13 +176,102 @@ public struct JunkScanner: Sendable {
                  children(of: "Library/Application Support/MobileSync/Backup").map { item($0) })
     }
 
+    /// Folders in ~/Library whose items are named after the app's bundle ID. Caches and Logs are left
+    /// out because their own categories already list everything in them.
+    private static let orphanFolders = [
+        "Application Support", "Containers", "Group Containers", "Application Scripts", "HTTPStorages", "WebKit",
+        "Saved Application State", "Preferences", "Cookies",
+    ]
+
+    /// Data of software that is no longer installed, in ~/Library and, with a password, in /Library.
     private func orphans() -> JunkCategory {
-        let containers = children(of: "Library/Containers").filter { isOrphan($0.lastPathComponent) }
-        let saved = children(of: "Library/Saved Application State").filter {
-            isOrphan($0.lastPathComponent.replacingOccurrences(of: ".savedState", with: ""))
+        var user: [(folder: String, url: URL)] = []
+        func add(_ folder: String, where isLeftover: (URL) -> Bool) {
+            user += children(of: "Library/" + folder).filter(isLeftover).map { (folder, $0) }
         }
-        return category("orphans", "已移除 App 的殘留", "找不到對應 App 的資料。若 App 放在外接硬碟上也可能被列入，請確認後再清除。",
-                        "questionmark.folder", on: false, (containers + saved).map { item($0) })
+        for folder in Self.orphanFolders {
+            add(folder) { url in
+                guard let id = Self.identifier(in: url.lastPathComponent), isOrphan(id) else { return false }
+                // Application Scripts folders carry no metadata, but the app's container of the same name does.
+                let owner = Self.ownerTeamID(of: url)
+                    ?? Self.ownerTeamID(of: home.appendingPathComponent("Library/Containers").appendingPathComponent(url.lastPathComponent))
+                return owner.map { !installedTeamIDs.contains($0) } ?? true
+            }
+        }
+        // These are named "<bundle id>.<host UUID>.plist".
+        add("Preferences/ByHost") {
+            $0.pathExtension == "plist" && isOrphan($0.deletingPathExtension().deletingPathExtension().lastPathComponent)
+        }
+        add("LaunchAgents", where: isBrokenLaunchJob)
+
+        var items = user.map {
+            JunkItem(url: $0.url, name: "~/Library/\($0.folder)/\($0.url.lastPathComponent)", size: FileWalker.allocatedSize(of: $0.url), inUse: false)
+        }
+        if let systemRoot {
+            items += systemOrphans(in: systemRoot).map {
+                JunkItem(url: $0, name: $0.path, size: FileWalker.allocatedSize(of: $0), inUse: false, isSystem: true)
+            }
+        }
+        // Empty folders and unreadable system items still count, so nothing is filtered out by size.
+        return JunkCategory(id: "orphans", title: "已移除 App 的殘留", detail: "已不存在的軟體留下的設定、支援檔案與容器，以及指向已刪除程式的背景服務。同一開發者仍有安裝其他軟體時不會列入。若 App 放在外接硬碟上也可能被列入，請確認後再清除。", symbol: "questionmark.folder", defaultSelected: false, permanent: false, items: items.sorted { $0.size > $1.size })
+    }
+
+    private func systemOrphans(in root: URL) -> [URL] {
+        var found: [URL] = []
+        for folder in ["Application Support", "Caches", "Preferences"] {
+            found += children(at: root.appendingPathComponent(folder)).filter {
+                Self.identifier(in: $0.lastPathComponent).map(isOrphan) ?? false
+            }
+        }
+        let jobs = PathGuard.launchFolders.flatMap { children(at: root.appendingPathComponent($0)) }
+        let broken = jobs.filter(isBrokenLaunchJob)
+        found += broken
+        // A privileged helper is only ever started by a launch daemon, so one no working job runs is dead.
+        let liveJobs = jobs.filter { !broken.contains($0) }
+        let usedHelpers = Set(liveJobs.compactMap { LaunchJob(url: $0)?.program }.map { URL(fileURLWithPath: $0).lastPathComponent.lowercased() })
+        found += children(at: root.appendingPathComponent("PrivilegedHelperTools")).filter {
+            !usedHelpers.contains($0.lastPathComponent.lowercased()) && isOrphan($0.lastPathComponent)
+        }
+        return found
+    }
+
+    /// A launch job whose program is gone can never run again, whatever its name says.
+    /// Programs on other volumes, or in folders this app can't read, can't be judged and are kept.
+    func isBrokenLaunchJob(_ url: URL) -> Bool {
+        guard let job = LaunchJob(url: url), let program = job.program, program.hasPrefix("/"),
+              !job.label.lowercased().hasPrefix("com.apple."), !program.hasPrefix("/Volumes/"),
+              !FileManager.default.fileExists(atPath: program) else { return false }
+        var parent = URL(fileURLWithPath: program).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: parent.path), parent.path != "/" {
+            parent = parent.deletingLastPathComponent()
+        }
+        return (try? FileManager.default.contentsOfDirectory(atPath: parent.path)) != nil
+    }
+
+    /// The developer who owns a container: group containers start with the Team ID, and app containers
+    /// record it in their metadata. nil when neither says.
+    static func ownerTeamID(of url: URL) -> String? {
+        if let first = url.lastPathComponent.split(separator: ".").first.map(String.init), isTeamID(first) { return first }
+        guard let data = try? Data(contentsOf: url.appendingPathComponent(".com.apple.containermanagerd.metadata.plist")),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) else { return nil }
+        let text = String(describing: plist)
+        guard let range = text.range(of: #"teamIdentifier\\?"\s*:\s*\\?"[A-Z0-9]{10}"#, options: .regularExpression) else { return nil }
+        return String(text[range].suffix(10))
+    }
+
+    private static func isTeamID(_ text: String) -> Bool {
+        text.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil
+    }
+
+    /// The bundle ID an item is named after: "com.foo.app", "com.foo.app.plist", "com.foo.app.savedState",
+    /// "com.foo.app.binarycookies", "<team ID>.com.foo.app" or "<team ID>.group.com.foo.app".
+    static func identifier(in name: String) -> String? {
+        var parts = name.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        if let last = parts.last?.lowercased(), ["plist", "savedstate", "binarycookies"].contains(last) { parts.removeLast() }
+        if let first = parts.first, isTeamID(first) { parts.removeFirst() }
+        if let first = parts.first?.lowercased(), ["group", "groups", "systemgroup"].contains(first) { parts.removeFirst() }
+        let id = parts.joined(separator: ".")
+        return id.range(of: #"^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9_-]+){2,}$"#, options: .regularExpression) != nil ? id : nil
     }
 
     private func trash() -> JunkCategory {
@@ -176,10 +284,25 @@ public struct JunkScanner: Sendable {
 
     // MARK: - Helpers
 
-    /// Only reverse-DNS, non-Apple identifiers qualify. Helpers count as installed when a parent ID is.
+    /// Namespaces of software that ships with macOS (Shortcuts was once Workflow), and of frameworks
+    /// that many apps embed and share data under, so no single app's removal makes them leftovers.
+    private static let systemNamespaces = [
+        "com.apple.", "org.cups.", "org.openssh.", "com.openssh.", "org.ntp.", "org.webkit.", "org.swift.", "org.llvm.",
+        "is.workflow.", "org.sparkle-project.", "com.firebase.", "com.install4j.", "com.crashlytics.", "io.sentry.",
+    ]
+
+    /// Only reverse-DNS identifiers outside macOS's own namespaces qualify. Helpers count as installed
+    /// when a parent ID is, and nothing counts as left over while its vendor has software installed.
     func isOrphan(_ identifier: String) -> Bool {
+        let lower = identifier.lowercased()
         var parts = identifier.split(separator: ".").map(String.init)
-        guard parts.count >= 3, !identifier.hasPrefix("com.apple.") else { return false }
+        guard parts.count >= 3, !Self.systemNamespaces.contains(where: lower.hasPrefix), !lower.contains("com.apple."),
+              !installedVendors.contains(AppInventory.vendor(of: lower)) else { return false }
+        // "com.vercel.cli" names the installed command "vercel". The top-level domain and generic words don't count.
+        let generic: Set<String> = ["app", "apps", "cli", "mac", "macos", "osx", "desktop", "helper", "agent", "daemon", "service", "launcher"]
+        if lower.split(separator: ".").dropFirst().contains(where: { $0.count >= 3 && !generic.contains(String($0)) && installedCommands.contains(String($0)) }) {
+            return false
+        }
         while parts.count >= 3 {
             if isInstalled(parts.joined(separator: ".")) { return false }
             parts.removeLast()
@@ -188,7 +311,10 @@ public struct JunkScanner: Sendable {
     }
 
     private func children(of relative: String) -> [URL] {
-        let folder = home.appendingPathComponent(relative)
+        children(at: home.appendingPathComponent(relative))
+    }
+
+    private func children(at folder: URL) -> [URL] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         return urls.filter { $0.lastPathComponent != ".DS_Store" }
     }

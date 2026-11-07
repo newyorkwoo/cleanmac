@@ -29,6 +29,10 @@ struct CleanMacApp: App {
         .commands {
             HelpCommands(language: model.language)
         }
+
+        Settings {
+            SettingsView(language: model.language)
+        }
     }
 }
 
@@ -64,9 +68,27 @@ private struct MenuBarLabel: View {
     let appDelegate: AppDelegate
     @Environment(\.openWindow) private var openWindow
 
+    @AppStorage(MemorySetting.showInMenuBar) private var showMemory = true
+    @AppStorage(MemorySetting.showPercent) private var showPercent = true
+    @State private var memory = SystemMonitor.memory()
+
     var body: some View {
-        Image(systemName: "sparkles")
-            .onAppear { appDelegate.windowOpenerIsReady { openWindow(id: "main") } }
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles")
+            if showMemory { Text(memoryText).monospacedDigit() }
+        }
+        .onAppear { appDelegate.windowOpenerIsReady { openWindow(id: "main") } }
+        .task {
+            while !Task.isCancelled {
+                memory = SystemMonitor.memory()
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private var memoryText: String {
+        showPercent ? "\(Int((memory.usedFraction * 100).rounded()))%"
+            : ByteCountFormatter.string(fromByteCount: memory.used, countStyle: .memory)
     }
 }
 
@@ -84,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // The launch event is only available from here: AppKit handles it after willFinishLaunching.
     func applicationDidFinishLaunching(_ notification: Notification) {
         let isLogin = isLoginItemLaunch(NSAppleEventManager.shared().currentAppleEvent)
+        MainActor.assumeIsolated { AutoPurgeController.shared.start() }
         if isLogin { NSApp.setActivationPolicy(.accessory) }
         opensWindowOnLaunch = !isLogin
         finishLaunchIfReady()

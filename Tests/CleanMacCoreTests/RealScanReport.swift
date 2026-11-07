@@ -15,6 +15,20 @@ final class RealScanReport: XCTestCase {
         }
     }
 
+    func testOrphanReport() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CLEANMAC_REAL_SCAN"] == "1")
+        let running = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
+        let start = Date()
+        let installed = AppInventory.installedSoftware()
+        let scanner = JunkScanner(runningBundleIDs: running, installedBundleIDs: installed.bundleIDs,
+                                  installedTeamIDs: installed.teamIDs, installedCommands: AppInventory.installedCommands(), systemRoot: URL(fileURLWithPath: "/Library")) {
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil
+        }
+        let items = scanner.scan().first { $0.id == "orphans" }?.items ?? []
+        print(String(format: "[orphans] %.1fs, %d installed bundles, %d items", Date().timeIntervalSince(start), installed.bundleIDs.count, items.count))
+        for item in items { print("  \(item.isSystem ? "SYS " : "    ")\(formatBytes(item.size))\t\(item.name)") }
+    }
+
     func testReport() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["CLEANMAC_REAL_SCAN"] == "1")
         let home = FileManager.default.homeDirectoryForCurrentUser

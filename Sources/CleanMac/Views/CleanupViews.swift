@@ -34,9 +34,12 @@ struct JunkView: View {
             Button(L("清理"), role: .destructive) { model.clean() }
             Button(L("取消"), role: .cancel) {}
         } message: {
-            Text(model.selectionIncludesPermanent
-                 ? L("其他項目會移到垃圾桶，但勾選的「垃圾桶」項目會永久刪除，無法復原。")
-                 : L("項目會移到垃圾桶，清空前都可以救回。"))
+            Text((model.selectionIncludesPermanent
+                  ? L("其他項目會移到垃圾桶，但勾選的「垃圾桶」項目會永久刪除，無法復原。")
+                  : L("項目會移到垃圾桶，清空前都可以救回。"))
+                 + (model.selectedSystemCount > 0
+                    ? "\n\n" + L("其中 %@ 個是系統項目：需要管理者密碼，相關背景服務也會停止，之後放回原位時同樣需要密碼。", model.selectedSystemCount)
+                    : ""))
         }
     }
 }
@@ -63,6 +66,12 @@ private struct JunkCategoryRow: View {
                         Text(L("App 執行中")).font(.caption2).foregroundStyle(.orange)
                     }
                     Spacer()
+                    if item.isSystem {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.secondary)
+                            .help(L("系統項目，需要管理者密碼"))
+                            .accessibilityLabel(L("系統項目，需要管理者密碼"))
+                    }
                     Text(formatBytes(item.size)).font(.callout).monospacedDigit().foregroundStyle(.secondary)
                 }
                 .contextMenu { Button(L("在 Finder 中顯示")) { revealInFinder(item.url) } }

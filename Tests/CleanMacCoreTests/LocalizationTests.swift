@@ -91,7 +91,8 @@ final class LocalizationTests: XCTestCase {
     }
 
     func testChoosingLanguagePersists() throws {
-        let suite = "cleanmac.tests.\(UUID().uuidString)"
+        // A fixed name: cfprefsd keeps an emptied domain's plist, so a new name per run piles up files.
+        let suite = "cleanmac.tests.language"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let saved = AppLanguage.current

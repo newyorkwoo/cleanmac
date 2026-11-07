@@ -161,7 +161,7 @@ public struct Cleaner: Sendable {
 
     /// One command, so there is one password prompt. Items stay owned by root in the Trash so
     /// they still work if put back. Returns nil when the prompt is cancelled.
-    func moveToTrashAsAdmin(_ items: [(url: URL, size: Int64)], run: (String) -> Shell.Output) -> CleanResult? {
+    public func moveToTrashAsAdmin(_ items: [(url: URL, size: Int64)], run: (String) -> Shell.Output) -> CleanResult? {
         let trash = home.appendingPathComponent(".Trash")
         try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
 
