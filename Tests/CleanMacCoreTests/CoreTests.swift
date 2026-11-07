@@ -280,7 +280,7 @@ final class CoreTests: XCTestCase {
     // MARK: - Memory purge
 
     func testPurgeRuleOnlyAllowsPurgeAndRefusesOddNames() throws {
-        XCTAssertEqual(PurgeAuthorization.rule(for: "steven"), "steven ALL=(root) NOPASSWD: /usr/sbin/purge")
+        XCTAssertEqual(PurgeAuthorization.rule(for: "steven"), #"steven ALL=(root) NOPASSWD: /usr/sbin/purge """#)
         for hostile in ["", "a b", "x'; rm -rf /", "root ALL=(ALL) ALL", "-x", "a\nb"] {
             XCTAssertNil(PurgeAuthorization.rule(for: hostile), hostile)
             XCTAssertNil(PurgeAuthorization.installCommand(for: hostile), hostile)
@@ -288,7 +288,7 @@ final class CoreTests: XCTestCase {
         let command = try XCTUnwrap(PurgeAuthorization.installCommand(for: "steven"))
         XCTAssertTrue(command.contains("visudo -cf"), "the rule is checked before it is installed")
         XCTAssertTrue(Shell.run("/bin/sh", ["-n", "-c", command]).ok, command)
-        XCTAssertTrue(command.contains("NOPASSWD: /usr/sbin/purge'"))
+        XCTAssertTrue(command.contains(#"NOPASSWD: /usr/sbin/purge ""'"#), "purge only, with no arguments")
         XCTAssertFalse(PurgeAuthorization.rulePath.split(separator: "/").last!.contains("."), "sudo skips names with a dot")
     }
 
@@ -634,6 +634,76 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(commands.isEmpty, "a refused item never reaches the root command")
         XCTAssertEqual(result.failures.map(\.path), ["/usr/bin/true"])
         for url in result.trashedURLs { try? FileManager.default.removeItem(at: url) }
+    }
+
+    // The root command runs as this user in these tests, which is enough to replay each attack:
+    // the closure changes the filesystem after the checks, as another process could while the prompt is open.
+
+    func testRootMoveIgnoresATrashSwappedForALink() throws {
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        let target = sandbox.appendingPathComponent("etc-sudoers.d")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let trash = home.appendingPathComponent(".Trash")
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).moveToTrashAsAdmin([(helper, 1)]) { command in
+            try? FileManager.default.removeItem(at: trash)
+            try? FileManager.default.createSymbolicLink(at: trash, withDestinationURL: target)
+            return self.runInShell(command)
+        })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path), [], "nothing lands where the link points")
+        XCTAssertEqual(result.count, 0)
+        XCTAssertEqual(result.failures.count, 1)
+    }
+
+    func testRootMoveIgnoresALinkPlantedUnderTheTrashName() throws {
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        let target = sandbox.appendingPathComponent("elsewhere")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let planted = home.appendingPathComponent(".Trash/com.vendor.helper")
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).moveToTrashAsAdmin([(helper, 1)]) { command in
+            try? FileManager.default.createDirectory(at: planted.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.createSymbolicLink(at: planted, withDestinationURL: target)
+            return self.runInShell(command)
+        })
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: target.path), [])
+        XCTAssertEqual(result.count, 0)
+        XCTAssertTrue(result.failures.first?.message.contains("Staging") == true, "\(result.failures)")
+    }
+
+    func testRootMoveIgnoresASourceFolderSwappedForALink() throws {
+        let apps = sandbox.appendingPathComponent("Applications-real")
+        let vendor = system.appendingPathComponent("Application Support")
+        let leftover = try write("Application Support/com.vendor.app", base: system)
+        let decoy = try write("decoy/com.vendor.app")
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).moveToTrashAsAdmin([(leftover, 1)]) { command in
+            try? FileManager.default.moveItem(at: vendor, to: apps)
+            try? FileManager.default.createSymbolicLink(at: vendor, withDestinationURL: decoy.deletingLastPathComponent())
+            return self.runInShell(command)
+        })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: decoy.path), "the link's target is left alone")
+        XCTAssertEqual(result.count, 0)
+    }
+
+    func testRootOnlyHandlesSystemItemsAndApplicationBundles() throws {
+        let cleaner = Cleaner(home: home, systemRoot: system)
+        XCTAssertTrue(cleaner.isAllowedAsAdmin(system.appendingPathComponent("PrivilegedHelperTools/com.vendor.helper")))
+        XCTAssertFalse(cleaner.isAllowedAsAdmin(home.appendingPathComponent("Library/Caches/com.foo")), "the home folder never goes to root")
+        XCTAssertFalse(cleaner.isAllowedAsAdmin(home.appendingPathComponent("Applications/Foo.app")))
+        XCTAssertFalse(cleaner.isAllowedAsAdmin(URL(fileURLWithPath: "/usr/bin/true")))
+        var commands: [String] = []
+        let result = try XCTUnwrap(cleaner.moveToTrashAsAdmin([(home.appendingPathComponent("Library/Caches/com.foo"), 1)]) {
+            commands.append($0)
+            return self.runInShell($0)
+        })
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertEqual(result.failures.count, 1)
+    }
+
+    func testUntrustedToolRunsAndReportsItsOutput() {
+        let ok = Shell.runUntrusted("/bin/sh", ["-c", "echo out; echo err >&2; exit 3"])
+        XCTAssertEqual(ok.status, 3)
+        XCTAssertEqual(ok.out, "out\n")
+        XCTAssertEqual(ok.err, "err\n")
+        XCTAssertFalse(Shell.runUntrusted("/nonexistent/tool").ok)
     }
 
     // MARK: - Startup & security

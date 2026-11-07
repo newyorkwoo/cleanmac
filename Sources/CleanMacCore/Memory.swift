@@ -152,7 +152,8 @@ public enum PurgeAuthorization {
     /// The rule for one account. nil for a name that could change the rule's meaning.
     static func rule(for user: String) -> String? {
         guard user.range(of: "^[A-Za-z0-9_][A-Za-z0-9_.-]*$", options: .regularExpression) != nil else { return nil }
-        return "\(user) ALL=(root) NOPASSWD: /usr/sbin/purge"
+        // The empty argument list allows purge exactly as is, with no arguments.
+        return "\(user) ALL=(root) NOPASSWD: /usr/sbin/purge \"\""
     }
 
     /// Everything happens as root inside /etc/sudoers.d, so no file the user could swap is ever installed,

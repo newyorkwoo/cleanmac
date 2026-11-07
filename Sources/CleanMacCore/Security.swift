@@ -102,7 +102,7 @@ public enum SecurityAuditor {
         }
 
         if let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].first(where: FileManager.default.isExecutableFile) {
-            let outdated = Shell.run(brew, ["outdated", "--quiet"], env: ["HOMEBREW_NO_AUTO_UPDATE": "1"], timeout: 60)
+            let outdated = Shell.runUntrusted(brew, ["outdated", "--quiet"], env: ["HOMEBREW_NO_AUTO_UPDATE": "1"], timeout: 60)
             let names = outdated.out.split(separator: "\n").map(String.init)
             if outdated.ok, !names.isEmpty {
                 let shown = names.prefix(15).joined(separator: L("、"))

@@ -84,6 +84,67 @@ public enum Shell {
         )
     }
 
+    /// Runs a tool that someone other than Apple controls, such as Homebrew's user-writable `brew` script.
+    /// A child normally counts as part of this app for privacy permissions, which would hand it Full Disk
+    /// Access; disclaiming makes it answer for itself. Where the system can't disclaim, it doesn't run at all.
+    public static func runUntrusted(
+        _ path: String,
+        _ args: [String] = [],
+        env: [String: String] = [:],
+        timeout: TimeInterval = 60
+    ) -> Output {
+        typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else {
+            return Output(status: -1, out: "", err: "responsibility_spawnattrs_setdisclaim unavailable")
+        }
+        let disclaim = unsafeBitCast(symbol, to: Disclaim.self)
+
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        guard disclaim(&attributes, 1) == 0 else { return Output(status: -1, out: "", err: "disclaim failed") }
+
+        let outPipe = Pipe(), errPipe = Pipe()
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, outPipe.fileHandleForWriting.fileDescriptor, 1)
+        posix_spawn_file_actions_adddup2(&actions, errPipe.fileHandleForWriting.fileDescriptor, 2)
+
+        let environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new }.map { "\($0)=\($1)" }
+        let argv = ([path] + args).map { strdup($0) } + [nil]
+        let envp = environment.map { strdup($0) } + [nil]
+        defer { (argv + envp).forEach { free($0) } }
+
+        var pid: pid_t = 0
+        let spawned = posix_spawn(&pid, path, &actions, &attributes, argv, envp)
+        try? outPipe.fileHandleForWriting.close()
+        try? errPipe.fileHandleForWriting.close()
+        guard spawned == 0 else { return Output(status: -1, out: "", err: String(cString: strerror(spawned))) }
+
+        let killer = DispatchWorkItem { kill(pid, SIGTERM) }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+        let group = DispatchGroup()
+        let box = PipeBox()
+        group.enter()
+        DispatchQueue.global().async {
+            box.out = outPipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global().async {
+            box.err = errPipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        group.wait()
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) == -1, errno == EINTR {}
+        killer.cancel()
+        let exitCode = (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1
+        return Output(status: exitCode, out: String(decoding: box.out, as: UTF8.self), err: String(decoding: box.err, as: UTF8.self))
+    }
+
     /// Runs a command as root through the standard macOS password prompt.
     /// Callers must validate or quote anything interpolated into `command`.
     public static func runAsAdmin(_ command: String) -> Output {
