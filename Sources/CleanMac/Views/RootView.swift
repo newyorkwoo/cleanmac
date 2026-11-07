@@ -86,7 +86,14 @@ private struct SidebarView: View {
                 Image(systemName: "globe")
             }
             .accessibilityLabel(L("語言"))
-            .padding(10)
+            .padding([.horizontal, .top], 10)
+            Text(versionLabel())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
         }
         .frame(width: 190)
         .background(.regularMaterial)

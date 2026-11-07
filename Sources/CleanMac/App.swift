@@ -1,4 +1,5 @@
 import AppKit
+import CleanMacCore
 import CoreServices
 import SwiftUI
 
@@ -25,7 +26,37 @@ struct CleanMacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1160, height: 740)
+        .commands {
+            HelpCommands(language: model.language)
+        }
     }
+}
+
+/// Stands in for the default Help item, which only reports that no help is available.
+private struct HelpCommands: Commands {
+    /// Unused in the body: the menu is outside RootView's tree, and a new value here is what retranslates it.
+    let language: AppLanguage
+
+    var body: some Commands {
+        CommandGroup(replacing: .help) {
+            Button("CleanMac \(versionLabel())") {
+                NSApp.orderFrontStandardAboutPanel(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+}
+
+/// The running app's version, translated: "Version 1.2 (3)".
+func versionLabel() -> String {
+    L("版本 %@", versionText(Bundle.main.infoDictionary ?? [:]))
+}
+
+/// "1.2 (3)", from the bundle's Info.plist. `swift run` has no bundle, so its values can be missing.
+func versionText(_ info: [String: Any]) -> String {
+    let version = info["CFBundleShortVersionString"] as? String ?? "?"
+    guard let build = info["CFBundleVersion"] as? String else { return version }
+    return "\(version) (\(build))"
 }
 
 /// Exists from launch, unlike the menu's contents, so it can hand AppDelegate a way to open the window.
