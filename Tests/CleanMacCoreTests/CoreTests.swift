@@ -172,7 +172,7 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(categories["browser-cache"]?.items.map(\.name), ["Chrome"])
         XCTAssertEqual(categories["dev-cache"]?.defaultSelected, false)
         XCTAssertEqual(categories["installers"]?.items.map(\.name), ["old.dmg"])
-        XCTAssertEqual(categories["orphans"]?.items.map(\.name), ["com.gone.app.savedState"])
+        XCTAssertEqual(categories["orphans"]?.items.map(\.name), ["~/Library/Saved Application State/com.gone.app.savedState"])
         XCTAssertEqual(categories["trash"]?.permanent, true)
         XCTAssertEqual(categories["trash"]?.defaultSelected, false)
     }
@@ -183,6 +183,138 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(scanner.isOrphan("com.apple.Music"))
         XCTAssertFalse(scanner.isOrphan("notAnIdentifier"))
         XCTAssertTrue(scanner.isOrphan("com.gone.app"))
+    }
+
+    func testDeepOrphanScanCoversLibraryFoldersAndKeepsInstalledVendors() throws {
+        let system = sandbox.appendingPathComponent("Library")
+        try write("Library/Application Support/com.gone.app/data")
+        try write("Library/Preferences/com.gone.app.plist")
+        try write("Library/Preferences/ByHost/com.gone.app.0A1B2C3D-0000-0000-0000-000000000000.plist")
+        try write("Library/Group Containers/ABCDE12345.com.gone.app/data")
+        try write("Library/HTTPStorages/com.gone.app.binarycookies")
+        // Same vendor as an installed product, so shared data stays.
+        try write("Library/Preferences/com.kept.shared.plist")
+        // macOS's own namespaces and names that aren't bundle IDs stay.
+        try write("Library/Preferences/org.cups.PrintingPrefs.plist")
+        try write("Library/Application Support/Some Folder 1.2.3/data")
+        try write("Library/Caches/com.gone.app/data")
+
+        func job(_ label: String, program: String, in folder: String, base: URL) throws {
+            let url = base.appendingPathComponent(folder).appendingPathComponent(label + ".plist")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let plist: [String: Any] = ["Label": label, "Program": program]
+            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+        }
+        let existing = try write("bin/tool")
+        try job("com.gone.agent", program: home.appendingPathComponent("bin/missing").path, in: "Library/LaunchAgents", base: home)
+        try job("homebrew.mxcl.db", program: existing.path, in: "Library/LaunchAgents", base: home)
+
+        try write("Application Support/com.gone.app/data", base: system)
+        try write("Preferences/com.gone.app.plist", base: system)
+        try write("PrivilegedHelperTools/com.gone.helper", base: system)
+        try write("PrivilegedHelperTools/com.used.helper", base: system)
+        try job("com.gone.daemon", program: system.appendingPathComponent("PrivilegedHelperTools/com.gone.missing").path,
+                in: "LaunchDaemons", base: system)
+        try job("com.used.daemon", program: system.appendingPathComponent("PrivilegedHelperTools/com.used.helper").path,
+                in: "LaunchDaemons", base: system)
+
+        let scanner = JunkScanner(home: home, installedBundleIDs: ["com.kept.app"], systemRoot: system) { _ in false }
+        let items = try XCTUnwrap(scanner.scan().first { $0.id == "orphans" }).items
+        XCTAssertEqual(Set(items.filter { !$0.isSystem }.map(\.name)), [
+            "~/Library/Application Support/com.gone.app", "~/Library/Preferences/com.gone.app.plist",
+            "~/Library/Preferences/ByHost/com.gone.app.0A1B2C3D-0000-0000-0000-000000000000.plist",
+            "~/Library/Group Containers/ABCDE12345.com.gone.app", "~/Library/HTTPStorages/com.gone.app.binarycookies",
+            "~/Library/LaunchAgents/com.gone.agent.plist",
+        ])
+        XCTAssertEqual(Set(items.filter(\.isSystem).map(\.url.lastPathComponent)), [
+            "com.gone.app", "com.gone.app.plist", "com.gone.helper", "com.gone.daemon.plist",
+        ])
+        XCTAssertNil(try XCTUnwrap(scanner.scan().first { $0.id == "orphans" }).items.first { $0.url.lastPathComponent == "com.used.helper" })
+    }
+
+    func testOrphanIdentifierParsing() {
+        XCTAssertEqual(JunkScanner.identifier(in: "com.foo.app.plist"), "com.foo.app")
+        XCTAssertEqual(JunkScanner.identifier(in: "com.foo.app.savedState"), "com.foo.app")
+        XCTAssertEqual(JunkScanner.identifier(in: "group.com.foo.app"), "com.foo.app")
+        XCTAssertEqual(JunkScanner.identifier(in: "UBF8T346G9.com.foo.app"), "com.foo.app")
+        XCTAssertNil(JunkScanner.identifier(in: "UBF8T346G9.Office"))
+        XCTAssertNil(JunkScanner.identifier(in: "Foo 1.2.3"))
+        XCTAssertNil(JunkScanner.identifier(in: "1.2.3"))
+        XCTAssertEqual(JunkScanner.identifier(in: "L82V4Y2P3C.group.com.wireguard.macos"), "com.wireguard.macos")
+        let scanner = JunkScanner(home: home) { _ in false }
+        XCTAssertFalse(scanner.isOrphan(JunkScanner.identifier(in: "243LU875E5.groups.com.apple.podcasts")!))
+        XCTAssertFalse(scanner.isOrphan(JunkScanner.identifier(in: "group.is.workflow.shortcuts")!))
+        XCTAssertFalse(scanner.isOrphan("org.sparkle-project.DownloaderService"))
+        let withCLI = JunkScanner(home: home, installedCommands: ["vercel", "cli"]) { _ in false }
+        XCTAssertFalse(withCLI.isOrphan("com.vercel.cli"), "an installed command keeps its data")
+        XCTAssertTrue(withCLI.isOrphan("com.gone.cli"), "generic words like cli don't count")
+    }
+
+    func testContainersOfAnInstalledDeveloperStay() throws {
+        let container = try write("Library/Containers/Odd.Service.Name/Data/x").deletingLastPathComponent().deletingLastPathComponent()
+        let metadata: [String: Any] = ["MCMMetadataInfo": ["Owners": #"[{"teamIdentifier":"VUTU7AKEUR","signingIdentifier":"Odd.Service.Name"}]"#]]
+        try PropertyListSerialization.data(fromPropertyList: metadata, format: .binary, options: 0)
+            .write(to: container.appendingPathComponent(".com.apple.containermanagerd.metadata.plist"))
+        XCTAssertEqual(JunkScanner.ownerTeamID(of: container), "VUTU7AKEUR")
+        try write("Library/Group Containers/VUTU7AKEUR.group.odd.shared.data/x")
+        try write("Library/Group Containers/ZZZZZ99999.group.gone.shared.data/x")
+
+        func orphanNames(teams: Set<String>) -> Set<String> {
+            let scanner = JunkScanner(home: home, installedTeamIDs: teams) { _ in false }
+            return Set(scanner.scan().first { $0.id == "orphans" }?.items.map(\.url.lastPathComponent) ?? [])
+        }
+        XCTAssertEqual(orphanNames(teams: ["VUTU7AKEUR"]), ["ZZZZZ99999.group.gone.shared.data"])
+        XCTAssertEqual(orphanNames(teams: []).count, 3)
+    }
+
+    func testInstalledBundlesIncludeNonAppBundles() throws {
+        let system = sandbox.appendingPathComponent("Library")
+        let pane = system.appendingPathComponent("PreferencePanes/Thing.prefPane/Contents")
+        try FileManager.default.createDirectory(at: pane, withIntermediateDirectories: true)
+        let info: [String: Any] = ["CFBundleIdentifier": "com.vendor.thing.pane", "CFBundlePackageType": "BNDL"]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: pane.appendingPathComponent("Info.plist"))
+        XCTAssertTrue(AppInventory.installedSoftware(home: home, systemRoot: system).bundleIDs.contains("com.vendor.thing.pane"))
+        XCTAssertEqual(AppInventory.vendor(of: "com.Vendor.thing.pane"), "com.vendor")
+    }
+
+    // MARK: - Memory purge
+
+    func testPurgeRuleOnlyAllowsPurgeAndRefusesOddNames() throws {
+        XCTAssertEqual(PurgeAuthorization.rule(for: "steven"), "steven ALL=(root) NOPASSWD: /usr/sbin/purge")
+        for hostile in ["", "a b", "x'; rm -rf /", "root ALL=(ALL) ALL", "-x", "a\nb"] {
+            XCTAssertNil(PurgeAuthorization.rule(for: hostile), hostile)
+            XCTAssertNil(PurgeAuthorization.installCommand(for: hostile), hostile)
+        }
+        let command = try XCTUnwrap(PurgeAuthorization.installCommand(for: "steven"))
+        XCTAssertTrue(command.contains("visudo -cf"), "the rule is checked before it is installed")
+        XCTAssertTrue(Shell.run("/bin/sh", ["-n", "-c", command]).ok, command)
+        XCTAssertTrue(command.contains("NOPASSWD: /usr/sbin/purge'"))
+        XCTAssertFalse(PurgeAuthorization.rulePath.split(separator: "/").last!.contains("."), "sudo skips names with a dot")
+    }
+
+    func testGeneratedRulePassesVisudo() throws {
+        let file = sandbox.appendingPathComponent("rule")
+        try (PurgeAuthorization.rule(for: "steven")! + "\n").write(to: file, atomically: true, encoding: .utf8)
+        let result = Shell.run("/usr/sbin/visudo", ["-c", "-f", file.path])
+        XCTAssertTrue(result.out.contains("parsed OK") || result.err.contains("parsed OK"), result.out + result.err)
+    }
+
+    func testPurgeThrottleAllowsOneRunEveryThreeMinutes() {
+        var throttle = PurgeThrottle()
+        let start = Date()
+        XCTAssertTrue(throttle.claim(at: start))
+        XCTAssertFalse(throttle.claim(at: start.addingTimeInterval(179)))
+        XCTAssertTrue(throttle.claim(at: start.addingTimeInterval(180)))
+    }
+
+    func testOnlyHeavyAppsTriggerPurgeOnQuit() {
+        var tracker = AppMemoryTracker()
+        tracker.record([1: AppMemoryTracker.heavyBytes, 2: 100_000_000])
+        XCTAssertTrue(tracker.didQuit(pid: 1))
+        XCTAssertFalse(tracker.didQuit(pid: 1), "forgotten once reported")
+        XCTAssertFalse(tracker.didQuit(pid: 2))
+        XCTAssertFalse(tracker.didQuit(pid: 3))
+        XCTAssertNotNil(SystemMonitor.footprint(of: getpid()))
     }
 
     // MARK: - Large files & duplicates

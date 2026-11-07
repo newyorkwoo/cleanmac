@@ -37,17 +37,17 @@ swift test                     # 執行測試
 | 功能 | 說明 |
 | --- | --- |
 | 智慧掃瞄 | 一次檢查勾選的項目，並顯示磁碟、記憶體與 CPU 狀態 |
-| 垃圾檔案 | 快取、記錄檔、Xcode 與開發工具快取、舊安裝檔、iOS 備份、已移除 App 的殘留 |
+| 垃圾檔案 | 快取、記錄檔、Xcode 與開發工具快取、舊安裝檔、iOS 備份，以及已移除軟體的深層殘留：`~/Library` 與 `/Library` 中的設定、支援檔案、容器、輔助工具，和指向已刪除程式的背景服務。同一開發者仍有安裝的軟體、命令列工具與 macOS 內建項目不會列入 |
 | 大型檔案 | 依大小或日期列出個人檔案 |
 | 重複檔案 | 以 SHA-256 比對內容，每組至少保留一份 |
 | 相似照片 | 以裝置端 Vision 分析找出近乎相同的照片 |
 | 磁碟地圖 | 以方塊圖呈現空間用量，可逐層查看 |
-| 記憶體 | 用量、記憶體壓力、占用最多的程序，以及執行 `purge` 釋放快取 |
+| 記憶體 | 用量、記憶體壓力、占用最多的程序，以及執行 `purge` 釋放快取。可在設定（⌘,）中開啟自動清除：關閉大量使用記憶體的 App 時、可用記憶體低於閾值時、電腦喚醒後，每三分鐘最多一次 |
 | 開機項目 | 停用或啟用 LaunchAgents／Daemons，管理登入項目 |
 | 應用程式 | 依名稱、大小或上次使用排序。解除安裝時會深度清除相關資料，包含 `/Library` 中的系統項目、背景服務和輔助工具 |
 | 安全檢查 | SIP、Gatekeeper、FileVault、防火牆、軟體更新、App 簽章與可疑開機項目 |
 | 檔案粉碎 | 以隨機資料覆寫後刪除 |
-| 選單列 | 隨時查看記憶體、CPU 與磁碟狀態 |
+| 選單列 | 顯示記憶體用量（百分比或容量），隨時查看記憶體、CPU 與磁碟狀態 |
 
 ## 安全設計
 
@@ -63,6 +63,7 @@ swift test                     # 執行測試
 - 第三方 App 的更新只檢查 Homebrew，不檢查其他來源。
 - 檔案粉碎在 SSD／APFS 上無法保證物理抹除，敏感資料請搭配 FileVault。
 - `purge` 只清除檔案快取。macOS 本來就會自動管理記憶體，效果通常短暫。
+- 自動清除記憶體會在 `/etc/sudoers.d/cleanmac-purge` 加入一條規則，只允許目前帳號不需密碼執行 `/usr/sbin/purge`。可在設定中按「移除授權」刪除；刪除 CleanMac 前也請先移除。
 - 內建於 App 中的背景項目（SMAppService）無法在此列出，請到系統設定調整。
 - 深度解除安裝不會依安裝套件的檔案清單刪除，也不會移除安裝記錄（receipts），所以名稱對不上 App 的檔案可能會留下。
 
@@ -90,14 +91,14 @@ Use the picker at the bottom left of the sidebar to switch between 繁體中文,
 | Feature | Description |
 | --- | --- |
 | Smart Scan | Checks all selected items at once and shows disk, memory and CPU status |
-| Junk Files | Caches, logs, Xcode and developer tool caches, old installers, iOS backups, and leftovers from removed apps |
+| Junk Files | Caches, logs, Xcode and developer tool caches, old installers, iOS backups, and deep leftovers of removed software: settings, support files, containers and helper tools in `~/Library` and `/Library`, plus background services pointing to deleted programs. Software whose developer still has something installed, command-line tools and macOS's own items are left alone |
 | Large Files | Lists personal files by size or date |
 | Duplicate Files | Compares contents with SHA-256 and keeps at least one copy in each group |
 | Similar Photos | Finds near-identical photos using on-device Vision analysis |
 | Disk Map | Shows space usage as a treemap you can drill into |
-| Memory | Usage, memory pressure, top processes, and running `purge` to free caches |
+| Memory | Usage, memory pressure, top processes, and running `purge` to free caches. Settings (⌘,) can free memory automatically when a memory-heavy app quits, when free memory drops below a threshold, or after waking, at most once every three minutes |
 | Startup Items | Disables or enables LaunchAgents and LaunchDaemons, and manages login items |
 | Applications | Sorts by name, size or last used. Uninstalling also removes related data, including system items, background services and helper tools in `/Library` |
 | Security Check | SIP, Gatekeeper, FileVault, firewall, software updates, app signatures, and suspicious startup items |
 | File Shredder | Overwrites files with random data, then deletes them |
-| Menu Bar | Shows memory, CPU and disk status at any time |
+| Menu Bar | Shows memory usage (as a percentage or amount), plus memory, CPU and disk status at any time |

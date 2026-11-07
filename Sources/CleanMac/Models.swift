@@ -64,6 +64,8 @@ final class AppModel {
     var hasFullDiskAccess = CleanMacCore.hasFullDiskAccess()
 
     let home: URL
+    /// Where system-wide leftovers are looked for; nil keeps scans inside `home`.
+    let systemRoot: URL?
     var lastResult: CleanResult?
     var language = AppLanguage.current {
         didSet {
@@ -86,8 +88,9 @@ final class AppModel {
     @ObservationIgnored lazy var security = SecurityModel(app: self)
     @ObservationIgnored lazy var shredder = ShredderModel(app: self)
 
-    init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    init(home: URL = FileManager.default.homeDirectoryForCurrentUser, systemRoot: URL? = URL(fileURLWithPath: "/Library")) {
         self.home = home
+        self.systemRoot = systemRoot
         let saved = UserDefaults.standard.string(forKey: "lastPage").flatMap(Page.init(rawValue:))
         page = saved ?? .dashboard
     }
@@ -192,6 +195,8 @@ final class JunkModel: ScanModel {
     var selectedItems: [JunkItem] { categories.flatMap(\.items).filter { selected.contains($0.id) } }
     var selectedSize: Int64 { selectedItems.reduce(0) { $0 + $1.size } }
     var total: Int64 { categories.reduce(0) { $0 + $1.size } }
+    /// How many chosen items are in /Library and need the administrator password.
+    var selectedSystemCount: Int { selectedItems.filter(\.isSystem).count }
     var selectionIncludesPermanent: Bool {
         categories.contains { $0.permanent && $0.items.contains { selected.contains($0.id) } }
     }
@@ -213,13 +218,18 @@ final class JunkModel: ScanModel {
     }
 
     func scan() {
-        let home = app.home
+        let home = app.home, systemRoot = app.systemRoot
         let running = NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
         launch { [self, progress] in
-            let scanner = JunkScanner(home: home, runningBundleIDs: running) {
-                NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil
+            let categories = await offMain {
+                let installed = AppInventory.installedSoftware(home: home)
+                let scanner = JunkScanner(
+                    home: home, runningBundleIDs: running, installedBundleIDs: installed.bundleIDs,
+                    installedTeamIDs: installed.teamIDs, installedCommands: AppInventory.installedCommands(home: home),
+                    systemRoot: systemRoot
+                ) { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+                return scanner.scan(progress: progress)
             }
-            let categories = await offMain { scanner.scan(progress: progress) }
             self.categories = categories
             self.selected = Self.defaultSelection(for: categories)
         }
@@ -228,15 +238,22 @@ final class JunkModel: ScanModel {
     @discardableResult func clean() -> Task<Void, Never> {
         let trashIDs = Set(categories.filter(\.permanent).flatMap(\.items).map(\.id))
         let chosen = selectedItems
-        let toTrash = chosen.filter { !trashIDs.contains($0.id) }.map { (url: $0.url, size: $0.size) }
+        let asAdmin = chosen.filter(\.isSystem).map { (url: $0.url, size: $0.size) }
+        let toTrash = chosen.filter { !trashIDs.contains($0.id) && !$0.isSystem }.map { (url: $0.url, size: $0.size) }
         let toDelete = chosen.filter { trashIDs.contains($0.id) }.map { (url: $0.url, size: $0.size) }
         let cleaner = Cleaner(home: app.home)
         let currentCategories = categories
         let currentSelection = selected
         return Task {
+            // Items needing the password go first, so cancelling the prompt leaves everything untouched.
+            var combined = CleanResult()
+            if !asAdmin.isEmpty {
+                guard let result = await offMain({ cleaner.moveToTrashAsAdmin(asAdmin, run: Shell.runAsAdmin) }) else { return }
+                combined.merge(result)
+            }
             let moved = await offMain { cleaner.moveToTrash(toTrash) }
             let deleted = await offMain { cleaner.deleteFromTrash(toDelete) }
-            var combined = moved
+            combined.merge(moved)
             combined.merge(deleted)
             let failed = Set(combined.failures.map(\.path))
             categories = currentCategories.compactMap { category in
@@ -246,7 +263,7 @@ final class JunkModel: ScanModel {
                     defaultSelected: category.defaultSelected, permanent: category.permanent, items: kept)
             }
             selected = selected.intersection(failed)
-            app.report(combined, offerEmptyTrash: moved.count > 0)
+            app.report(combined, offerEmptyTrash: combined.count > deleted.count)
         }
     }
 }

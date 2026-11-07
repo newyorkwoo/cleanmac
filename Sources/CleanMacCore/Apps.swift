@@ -1,5 +1,6 @@
 import CoreServices
 import Foundation
+import Security
 
 public struct AppInfo: Identifiable, Hashable, Sendable {
     public var id: String { url.path }
@@ -56,6 +57,88 @@ public enum AppInventory {
 
     /// Symlinks are skipped, which also leaves out the system apps linked into /Applications.
     private static func findBundles(in folder: URL, depth: Int) -> [URL] {
+        findBundles(in: folder, depth: depth, extensions: ["app"])
+    }
+
+    /// Bundle IDs of installed software of every kind, not only apps: prefpanes, plugins, drivers, JDKs and
+    /// frameworks also keep data under their vendor's IDs, and so do the XPC services and extensions inside
+    /// apps. Application Support is left out on purpose, since removed apps often leave updater apps there,
+    /// which would make their own leftovers look installed.
+    public static func installedSoftware(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        systemRoot: URL = URL(fileURLWithPath: "/Library")
+    ) -> (bundleIDs: Set<String>, teamIDs: Set<String>) {
+        let libraryFolders = [
+            "PreferencePanes", "Input Methods", "Audio/Plug-Ins", "Internet Plug-Ins", "QuickLook", "Spotlight",
+            "Screen Savers", "Services", "Components", "Contextual Menu Items", "Extensions", "Printers",
+            "Image Capture", "Java/JavaVirtualMachines", "Frameworks", "Mail/Bundles",
+        ]
+        var roots: [(URL, Int)] = [
+            (URL(fileURLWithPath: "/Applications"), 4), (home.appendingPathComponent("Applications"), 4),
+            (URL(fileURLWithPath: "/System/Applications"), 3),
+        ]
+        for folder in libraryFolders {
+            roots.append((systemRoot.appendingPathComponent(folder), 3))
+            roots.append((home.appendingPathComponent("Library").appendingPathComponent(folder), 3))
+        }
+        var ids: Set<String> = []
+        var teams: Set<String> = []
+        for (root, depth) in roots {
+            for url in findBundles(in: root, depth: depth, extensions: installedBundleExtensions) {
+                if let id = Bundle(url: url)?.bundleIdentifier { ids.insert(id.lowercased()) }
+                guard url.pathExtension.lowercased() == "app" else { continue }
+                if let team = teamIdentifier(of: url) { teams.insert(team) }
+                let contents = url.appendingPathComponent("Contents")
+                for folder in ["XPCServices", "PlugIns", "Library", "Helpers"] {
+                    for inner in findBundles(in: contents.appendingPathComponent(folder), depth: 2, extensions: embeddedBundleExtensions) {
+                        if let id = Bundle(url: inner)?.bundleIdentifier { ids.insert(id.lowercased()) }
+                    }
+                }
+            }
+        }
+        return (ids, teams)
+    }
+
+    /// Names of command-line tools. They have no bundle, but some keep data under IDs such as
+    /// "com.vercel.cli", so an ID naming an installed command isn't a leftover.
+    public static func installedCommands(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Set<String> {
+        var folders = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        folders += ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin", "/opt/local/bin"]
+        folders += [".local/bin", "bin", ".cargo/bin", "go/bin", ".bun/bin", ".deno/bin", ".npm-global/bin", ".volta/bin",
+                    ".yarn/bin", ".pyenv/shims", ".rbenv/shims", ".asdf/shims", ".dotnet/tools"].map { home.appendingPathComponent($0).path }
+        let nvm = home.appendingPathComponent(".nvm/versions/node")
+        folders += ((try? FileManager.default.contentsOfDirectory(atPath: nvm.path)) ?? []).map { nvm.appendingPathComponent($0 + "/bin").path }
+        var names: Set<String> = []
+        for folder in Set(folders) {
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] { names.insert(name.lowercased()) }
+        }
+        return names
+    }
+
+    /// The developer's Team ID from the code signature, without validating it.
+    static func teamIdentifier(of url: URL) -> String? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &code) == errSecSuccess, let code else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dictionary = info as? [String: Any] else { return nil }
+        return dictionary[kSecCodeInfoTeamIdentifier as String] as? String
+    }
+
+    static let embeddedBundleExtensions: Set<String> = installedBundleExtensions.union(["xpc", "appex", "systemextension"])
+
+    static let installedBundleExtensions: Set<String> = [
+        "app", "prefpane", "plugin", "component", "bundle", "kext", "driver", "jdk", "framework", "qlgenerator",
+        "mdimporter", "saver", "vst", "vst3", "mailbundle", "service",
+    ]
+
+    /// "com.vendor" for "com.vendor.product.helper". Products of one vendor share data, so any installed
+    /// product of the vendor keeps the vendor's data from being called a leftover.
+    public static func vendor(of identifier: String) -> String {
+        identifier.lowercased().split(separator: ".").prefix(2).joined(separator: ".")
+    }
+
+    private static func findBundles(in folder: URL, depth: Int, extensions: Set<String>) -> [URL] {
         guard depth > 0 else { return [] }
         let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
         let urls = (try? FileManager.default.contentsOfDirectory(
@@ -63,7 +146,7 @@ public enum AppInventory {
         return urls.flatMap { url -> [URL] in
             let values = try? url.resourceValues(forKeys: Set(keys))
             guard values?.isSymbolicLink != true, values?.isDirectory == true else { return [] }
-            return url.pathExtension == "app" ? [url] : findBundles(in: url, depth: depth - 1)
+            return extensions.contains(url.pathExtension.lowercased()) ? [url] : findBundles(in: url, depth: depth - 1, extensions: extensions)
         }
     }
 

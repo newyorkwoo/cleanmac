@@ -200,6 +200,11 @@ struct MenuBarView: View {
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
+            SettingsLink { Text(L("設定⋯")) }
+                .simultaneousGesture(TapGesture().onEnded {
+                    NSApp.setActivationPolicy(.regular)
+                    NSApp.activate(ignoringOtherApps: true)
+                })
             Button(L("結束")) { NSApp.terminate(nil) }
         }
         .id(model.language)

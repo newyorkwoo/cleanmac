@@ -17,7 +17,7 @@ final class AppFlowTests: XCTestCase {
         sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("cleanmac-flow-\(UUID().uuidString)")
         home = sandbox.appendingPathComponent("home")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        app = AppModel(home: home)
+        app = AppModel(home: home, systemRoot: nil)
         app.hasFullDiskAccess = true
         _ = NSApplication.shared
     }
@@ -76,6 +76,26 @@ final class AppFlowTests: XCTestCase {
         if let folder = ProcessInfo.processInfo.environment["CLEANMAC_SNAPSHOT_DIR"] {
             let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
             try data.write(to: URL(fileURLWithPath: folder).appendingPathComponent(page.rawValue + ".png"))
+        }
+    }
+
+    func testSettingsRenderAndThresholdIsClamped() throws {
+        XCTAssertEqual(clampedThreshold(0), 1)
+        XCTAssertEqual(clampedThreshold(5000), 1024)
+        XCTAssertEqual(clampedThreshold(32), 32)
+        let host = NSHostingView(rootView: SettingsView(language: .traditionalChinese).background(Color.white))
+        host.appearance = NSAppearance(named: .aqua)
+        host.frame = NSRect(x: 0, y: 0, width: 560, height: 620)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        XCTAssertGreaterThan(rep.pixelsWide, 0)
+        if let folder = ProcessInfo.processInfo.environment["CLEANMAC_SNAPSHOT_DIR"] {
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: folder).appendingPathComponent("settings.png"))
         }
     }
 
