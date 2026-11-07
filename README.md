@@ -44,7 +44,7 @@ swift test                     # 執行測試
 | 磁碟地圖 | 以方塊圖呈現空間用量，可逐層查看 |
 | 記憶體 | 用量、記憶體壓力、占用最多的程序，以及執行 `purge` 釋放快取 |
 | 開機項目 | 停用或啟用 LaunchAgents／Daemons，管理登入項目 |
-| 應用程式 | 依名稱、大小或上次使用排序，解除安裝時一併清除相關資料 |
+| 應用程式 | 依名稱、大小或上次使用排序。解除安裝時會深度清除相關資料，包含 `/Library` 中的系統項目、背景服務和輔助工具 |
 | 安全檢查 | SIP、Gatekeeper、FileVault、防火牆、軟體更新、App 簽章與可疑開機項目 |
 | 檔案粉碎 | 以隨機資料覆寫後刪除 |
 | 選單列 | 隨時查看記憶體、CPU 與磁碟狀態 |
@@ -55,6 +55,7 @@ swift test                     # 執行測試
 - 除了垃圾桶類別和檔案粉碎，所有清理都是移到垃圾桶，可以救回。
 - 所有刪除都經過 `PathGuard`，會拒絕系統路徑、家目錄主要資料夾、鑰匙圈和 `.ssh` 等位置。
 - 不會跟隨符號連結，也不會讀取尚未下載的雲端檔案。
+- 解除安裝是唯一會動到 `/Library` 的清理：只處理 bundle ID、完整 App 名稱或背景服務設定明確對應到該 App 的項目，不碰 Apple 的項目，並且需要管理者密碼。系統項目同樣移到垃圾桶，要放回時也需要密碼。
 
 ## 限制
 
@@ -63,6 +64,7 @@ swift test                     # 執行測試
 - 檔案粉碎在 SSD／APFS 上無法保證物理抹除，敏感資料請搭配 FileVault。
 - `purge` 只清除檔案快取。macOS 本來就會自動管理記憶體，效果通常短暫。
 - 內建於 App 中的背景項目（SMAppService）無法在此列出，請到系統設定調整。
+- 深度解除安裝不會依安裝套件的檔案清單刪除，也不會移除安裝記錄（receipts），所以名稱對不上 App 的檔案可能會留下。
 
 ## English
 
@@ -95,7 +97,7 @@ Use the picker at the bottom left of the sidebar to switch between 繁體中文,
 | Disk Map | Shows space usage as a treemap you can drill into |
 | Memory | Usage, memory pressure, top processes, and running `purge` to free caches |
 | Startup Items | Disables or enables LaunchAgents and LaunchDaemons, and manages login items |
-| Applications | Sorts by name, size or last used, and removes related data when uninstalling |
+| Applications | Sorts by name, size or last used. Uninstalling also removes related data, including system items, background services and helper tools in `/Library` |
 | Security Check | SIP, Gatekeeper, FileVault, firewall, software updates, app signatures, and suspicious startup items |
 | File Shredder | Overwrites files with random data, then deletes them |
 | Menu Bar | Shows memory, CPU and disk status at any time |

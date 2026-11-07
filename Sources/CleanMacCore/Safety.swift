@@ -14,6 +14,11 @@ public enum SafetyError: LocalizedError, Equatable {
 /// happen, then refuses folders whose removal would damage the account.
 public struct PathGuard: Sendable {
     public let home: String
+    private let systemRoot: URL
+
+    /// Folders in /Library whose direct children an uninstall may remove with an administrator password.
+    static let launchFolders = ["LaunchAgents", "LaunchDaemons"]
+    static let systemFolders = ["Application Support", "Caches", "Logs", "Preferences", "PrivilegedHelperTools"] + launchFolders
 
     /// The folder itself may not be removed, though items inside it may.
     private static let keepFolder = [
@@ -28,8 +33,26 @@ public struct PathGuard: Sendable {
         ".ssh", ".gnupg", "Library/Keychains", "Library/Mail", "Library/Messages", "Library/Accounts",
     ]
 
-    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    public init(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        systemRoot: URL = URL(fileURLWithPath: "/Library")
+    ) {
         self.home = Self.canonical(home)
+        self.systemRoot = systemRoot
+    }
+
+    /// Kept apart from `check` so only an uninstall can reach these paths, never a scan's result.
+    /// Allows direct children of `systemFolders` only, and nothing in Apple's namespace.
+    public func checkSystemItem(_ url: URL) throws {
+        let reject = SafetyError.protectedPath(url.path)
+        if url.path.split(separator: "/").contains("..") { throw reject }
+        let name = url.lastPathComponent.lowercased()
+        if name.hasPrefix("com.apple.") { throw reject }
+        let parent = Self.canonical(url.deletingLastPathComponent()).lowercased()
+        guard let folder = Self.systemFolders.first(where: {
+            Self.canonical(systemRoot.appendingPathComponent($0)).lowercased() == parent
+        }) else { throw reject }
+        if Self.launchFolders.contains(folder), !name.hasSuffix(".plist") { throw reject }
     }
 
     public func check(_ url: URL) throws {
@@ -102,9 +125,107 @@ public struct Cleaner: Sendable {
     public let pathGuard: PathGuard
     public let home: URL
 
-    public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+    public init(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        systemRoot: URL = URL(fileURLWithPath: "/Library")
+    ) {
         self.home = home
-        self.pathGuard = PathGuard(home: home)
+        self.pathGuard = PathGuard(home: home, systemRoot: systemRoot)
+    }
+
+    /// Removes an app and its chosen leftovers. Everything needing a password goes first, so
+    /// cancelling the prompt returns nil with nothing removed.
+    public func uninstall(
+        app: (url: URL, size: Int64),
+        leftovers: [LeftoverItem],
+        runAsAdmin: (String) -> Shell.Output = Shell.runAsAdmin
+    ) -> CleanResult? {
+        var adminItems = leftovers.filter(\.isSystem).map { (url: $0.url, size: $0.size) }
+        var userItems = leftovers.filter { !$0.isSystem }.map { (url: $0.url, size: $0.size) }
+        // Installer packages can leave an app owned by root.
+        if FileManager.default.isWritableFile(atPath: app.url.path) {
+            userItems.insert(app, at: 0)
+        } else {
+            adminItems.insert(app, at: 0)
+        }
+
+        var result = CleanResult()
+        if !adminItems.isEmpty {
+            guard let moved = moveToTrashAsAdmin(adminItems, run: runAsAdmin) else { return nil }
+            result.merge(moved)
+        }
+        stopUserJobs(userItems.map(\.url))
+        result.merge(moveToTrash(userItems))
+        return result
+    }
+
+    /// One command, so there is one password prompt. Items stay owned by root in the Trash so
+    /// they still work if put back. Returns nil when the prompt is cancelled.
+    func moveToTrashAsAdmin(_ items: [(url: URL, size: Int64)], run: (String) -> Shell.Output) -> CleanResult? {
+        let trash = home.appendingPathComponent(".Trash")
+        try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+
+        var result = CleanResult()
+        var commands: [String] = []
+        var planned: [(url: URL, size: Int64, destination: URL)] = []
+        var usedNames: Set<String> = []
+        for item in items {
+            do {
+                if (try? pathGuard.checkSystemItem(item.url)) == nil { try pathGuard.check(item.url) }
+            } catch {
+                result.failures.append(.init(path: item.url.path, message: error.localizedDescription))
+                continue
+            }
+            if let stop = stopCommand(for: item.url) { commands.append(stop) }
+            var name = item.url.lastPathComponent
+            if usedNames.contains(name) || FileManager.default.fileExists(atPath: trash.appendingPathComponent(name).path) {
+                name += " " + UUID().uuidString.prefix(8)
+            }
+            usedNames.insert(name)
+            let destination = trash.appendingPathComponent(name)
+            commands.append("/bin/mv -n \(Self.shellQuoted(item.url.path)) \(Self.shellQuoted(destination.path)) 2>&1")
+            planned.append((item.url, item.size, destination))
+        }
+        guard !planned.isEmpty else { return result }
+
+        // The final true keeps one failed item from reading as a failure of the whole command.
+        let output = run((commands + ["true"]).joined(separator: "; "))
+        if !output.ok, output.err.contains("-128") { return nil }
+
+        // The filesystem is the record of what moved, since the command's status covers no single item.
+        let details = (output.err + output.out).trimmingCharacters(in: .whitespacesAndNewlines)
+        for item in planned {
+            var info = stat()
+            if lstat(item.url.path, &info) != 0, errno == ENOENT {
+                result.count += 1
+                result.bytes += item.size
+                result.removedPaths.append(item.url.path)
+                result.trashedURLs.append(item.destination)
+            } else {
+                result.failures.append(.init(path: item.url.path, message: details.isEmpty ? L("無法移到垃圾桶。") : details))
+            }
+        }
+        return result
+    }
+
+    /// launchd keeps a job running after its plist is gone, so it has to be stopped first.
+    private func stopCommand(for url: URL) -> String? {
+        let folder = url.deletingLastPathComponent().lastPathComponent
+        guard PathGuard.launchFolders.contains(folder), let job = LaunchJob(url: url), StartupManager.isSafeLabel(job.label) else { return nil }
+        let domain = folder == "LaunchDaemons" ? "system" : "gui/\(getuid())"
+        return "/bin/launchctl bootout \(domain)/\(job.label) >/dev/null 2>&1"
+    }
+
+    private func stopUserJobs(_ urls: [URL]) {
+        let agents = PathGuard.canonical(home.appendingPathComponent("Library/LaunchAgents"))
+        for url in urls where PathGuard.canonical(url.deletingLastPathComponent()) == agents {
+            guard let job = LaunchJob(url: url), StartupManager.isSafeLabel(job.label) else { continue }
+            _ = Shell.run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(job.label)"])
+        }
+    }
+
+    static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Moves items to the Trash so that anything removed here can be put back.

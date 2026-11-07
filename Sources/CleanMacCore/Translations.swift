@@ -2,6 +2,7 @@
 // Simplified Chinese, Japanese, English, Korean, Latin.
 // Use positional placeholders such as %2$@ when a language needs values in another order.
 let translationTable: [String: [String]] = [
+    "App 和勾選的 %@ 個相關項目會移到垃圾桶。其中 %@ 個是系統項目：需要管理者密碼，相關背景服務也會停止，之後放回原位時同樣需要密碼。": ["App 和勾选的 %@ 个相关项目会移到废纸篓。其中 %@ 个是系统项目：需要管理员密码，相关后台服务也会停止，之后放回原位时同样需要密码。", "App と選択した関連項目 %@ 件をゴミ箱に移動します。そのうち %@ 件はシステム項目です。管理者パスワードが必要で、関連するバックグラウンドサービスも停止します。元の場所に戻すときもパスワードが必要です。", "The app and %@ selected related items will move to the Trash. %@ of them are system items: this needs an administrator password and stops related background services, and putting them back later also needs the password.", "앱과 선택한 관련 항목 %@개를 휴지통으로 옮깁니다. 그중 %@개는 시스템 항목으로, 관리자 암호가 필요하고 관련 백그라운드 서비스도 중지됩니다. 나중에 되돌릴 때도 암호가 필요합니다.", "Applicatio et %@ res selectae in cistam movebuntur. Ex his %@ res systematis sunt: tessera administratoris requiritur, ministeria occulta sistentur, et ad restituendum quoque tessera requiritur."],
     "已移到垃圾桶 %@ 個項目（%@）。": ["已移到废纸篓 %@ 个项目（%@）。", "%@ 項目（%@）をゴミ箱に移動しました。", "Moved %@ items (%@) to the Trash.", "%@개 항목(%@)을 휴지통으로 옮겼습니다.", "%@ res (%@) in cistam translatae sunt."],
     "已粉碎 %@ 個項目（%@）。": ["已粉碎 %@ 个项目（%@）。", "%@ 項目（%@）をシュレッドしました。", "Shredded %@ items (%@).", "%@개 항목(%@)을 파쇄했습니다.", "%@ res (%@) concisae sunt."],
     "%@ 份相同檔案，可釋放 %@": ["%@ 份相同文件，可释放 %@", "同一ファイル %@ 件、%@ を解放可能", "%@ identical files, %@ can be freed", "동일한 파일 %@개, %@ 확보 가능", "%@ fasciculi idem, %@ liberari possunt"],
@@ -168,6 +169,7 @@ let translationTable: [String: [String]] = [
     "無法復原": ["无法恢复", "復元不可", "Can't be undone", "복원 불가", "Irrevocabile"],
     "無法檢查更新，請確認網路連線。": ["无法检查更新，请确认网络连接。", "アップデートをチェックできません。ネットワーク接続を確認してください。", "Couldn't check for updates. Check your network connection.", "업데이트를 확인할 수 없습니다. 네트워크 연결을 확인하세요.", "Renovationes quaeri non possunt; conexum retis inspice."],
     "無法清空垃圾桶：%@": ["无法清倒废纸篓：%@", "ゴミ箱を空にできません：%@", "Couldn't empty the Trash: %@", "휴지통을 비울 수 없습니다: %@", "Cista vacuari non potest: %@"],
+    "無法移到垃圾桶。": ["无法移到废纸篓。", "ゴミ箱に移動できません。", "Couldn't move to the Trash.", "휴지통으로 옮길 수 없습니다.", "In cistam moveri non potuit."],
     "無法移除登入項目：%@": ["无法移除登录项：%@", "ログイン項目を削除できません：%@", "Couldn't remove the login item: %@", "로그인 항목을 제거할 수 없습니다: %@", "Res initii sessionis removeri non potest: %@"],
     "無法讀取登入項目（請在系統設定 > 隱私權與安全性 > 自動化中允許）：%@": ["无法读取登录项（请在系统设置 > 隐私与安全性 > 自动化中允许）：%@", "ログイン項目を読み込めません（システム設定 > プライバシーとセキュリティ > オートメーションで許可してください）：%@", "Couldn't read login items. Allow access in System Settings > Privacy & Security > Automation: %@", "로그인 항목을 읽을 수 없습니다(시스템 설정 > 개인정보 보호 및 보안 > 자동화에서 허용하세요): %@", "Res initii sessionis legi non possunt (permitte in System Settings > Privacy & Security > Automation): %@"],
     "無法變更「%@」：%@": ["无法更改“%@”：%@", "「%@」を変更できません：%@", "Couldn't change %@: %@", "'%@'을(를) 변경할 수 없습니다: %@", "%@ mutari non potest: %@"],
@@ -196,6 +198,7 @@ let translationTable: [String: [String]] = [
     "系統完整性保護 (SIP)": ["系统完整性保护 (SIP)", "システム整合性保護 (SIP)", "System Integrity Protection (SIP)", "시스템 무결성 보호(SIP)", "Tutela integritatis systematis (SIP)"],
     "系統背景程式": ["系统后台程序", "システムデーモン", "System daemons", "시스템 데몬", "Daemones systematis"],
     "系統設定": ["系统设置", "システム設定", "System Settings", "시스템 설정", "Optiones systematis"],
+    "系統項目，需要管理者密碼": ["系统项目，需要管理员密码", "システム項目。管理者パスワードが必要です", "System item. Needs an administrator password.", "시스템 항목. 관리자 암호가 필요합니다", "Res systematis. Tessera administratoris requiritur."],
     "結束": ["退出", "終了", "Quit", "종료", "Claude"],
     "網頁暫存檔，不會影響書籤和密碼。": ["网页临时文件，不影响书签和密码。", "Web の一時ファイル。ブックマークやパスワードには影響しません。", "Temporary web files. Bookmarks and passwords aren't affected.", "웹 임시 파일로, 책갈피와 암호에는 영향을 주지 않습니다.", "Fasciculi temporarii telae; signa et tesserae non tanguntur."],
     "總覽": ["总览", "概要", "Overview", "개요", "Conspectus"],

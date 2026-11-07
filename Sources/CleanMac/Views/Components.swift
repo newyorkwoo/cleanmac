@@ -144,6 +144,7 @@ struct FileRow: View {
     var modified: Date?
     @Binding var isOn: Bool
     var isEnabled = true
+    var needsAdmin = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -157,6 +158,12 @@ struct FileRow: View {
                 Text(displayPath(url)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 12)
+            if needsAdmin {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .help(L("系統項目，需要管理者密碼"))
+                    .accessibilityLabel(L("系統項目，需要管理者密碼"))
+            }
             if let modified {
                 Text(dateText(modified)).font(.caption).foregroundStyle(.secondary)
             }

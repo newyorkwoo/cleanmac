@@ -334,6 +334,176 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(names, ["com.apple.dt.Xcode"])
     }
 
+    // MARK: - Deep uninstall
+
+    private var system: URL { sandbox.appendingPathComponent("SystemLibrary") }
+    private var fooApp: AppInfo {
+        AppInfo(url: URL(fileURLWithPath: "/Applications/Foo Editor.app"), name: "Foo Editor",
+                bundleID: "com.cleanmac-test.foo", version: "1", size: 0, lastUsed: nil)
+    }
+
+    private func writeJob(_ relative: String, label: String, extra: [String: Any]) throws {
+        var plist = extra
+        plist["Label"] = label
+        let url = system.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+    }
+
+    func testDeepUninstallFindsEveryUserLocation() throws {
+        try write("Library/Preferences/ByHost/com.cleanmac-test.foo.0A1B2C3D-1111-2222-3333-444455556666.plist")
+        try write("Library/Preferences/ByHost/com.cleanmac-test.foobar.0A1B2C3D-1111-2222-3333-444455556666.plist")
+        try write("Library/Application Scripts/ABC123.com.cleanmac-test.foo/x")
+        try write("Library/Logs/DiagnosticReports/Foo Editor-2026-01-31-120000.ips")
+        try write("Library/Logs/DiagnosticReports/Foo Editor Pro-2026-01-31-120000.ips")
+        try write("Library/Logs/DiagnosticReports/Foo Editor-notes.txt")
+        try write("Library/Application Support/CrashReporter/Foo Editor_0A1B2C3D-1111-2222-3333-444455556666.plist")
+
+        let names = Set(AppInventory.leftovers(for: fooApp, home: home, systemRoot: system).map(\.url.lastPathComponent))
+        XCTAssertEqual(names, [
+            "com.cleanmac-test.foo.0A1B2C3D-1111-2222-3333-444455556666.plist", "ABC123.com.cleanmac-test.foo",
+            "Foo Editor-2026-01-31-120000.ips", "Foo Editor_0A1B2C3D-1111-2222-3333-444455556666.plist",
+        ])
+    }
+
+    func testDeepUninstallFindsSystemItemsAndJobsThatNameTheApp() throws {
+        try write("Application Support/Foo Editor/x", base: system)
+        try write("Application Support/Foo Editor Pro/x", base: system)
+        try write("Caches/com.cleanmac-test.foo/x", base: system)
+        try write("Preferences/com.cleanmac-test.foo.plist", base: system)
+        try write("Preferences/com.cleanmac-test.foobar.plist", base: system)
+        try write("PrivilegedHelperTools/com.cleanmac-test.unrelated", base: system)
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        try writeJob("LaunchDaemons/com.vendor.helper.plist", label: "com.vendor.helper",
+                     extra: ["Program": helper.path, "AssociatedBundleIdentifiers": ["com.cleanmac-test.foo"]])
+        try writeJob("LaunchAgents/com.vendor.agent.plist", label: "com.vendor.agent",
+                     extra: ["ProgramArguments": ["/Applications/Foo Editor.app/Contents/MacOS/agent", "-x"]])
+        try writeJob("LaunchAgents/com.vendor.other.plist", label: "com.vendor.other",
+                     extra: ["ProgramArguments": ["/Applications/Foo Editor Pro.app/Contents/MacOS/agent"]])
+        // A job may point its program anywhere: it must not pull that file into the list.
+        try writeJob("LaunchDaemons/com.vendor.bad.plist", label: "com.vendor.bad",
+                     extra: ["Program": "/usr/bin/true", "AssociatedBundleIdentifiers": ["com.cleanmac-test.foo"]])
+
+        let found = AppInventory.leftovers(for: fooApp, home: home, systemRoot: system)
+        XCTAssertTrue(found.allSatisfy(\.isSystem))
+        XCTAssertEqual(Set(found.map(\.url.lastPathComponent)), [
+            "Foo Editor", "com.cleanmac-test.foo", "com.cleanmac-test.foo.plist", "com.vendor.helper",
+            "com.vendor.helper.plist", "com.vendor.agent.plist", "com.vendor.bad.plist",
+        ])
+    }
+
+    func testHelpersDeclaredByTheAppBundleAreFound() throws {
+        // The shape of Docker: helpers share a vendor prefix, not the app's bundle ID.
+        let bundle = sandbox.appendingPathComponent("Apps/Whale.app")
+        try write("Contents/MacOS/com.whale.socket", base: bundle)
+        try write("Contents/MacOS/whale", base: bundle)
+        let info = ["CFBundleIdentifier": "com.whale.desktop", "SMPrivilegedExecutables": ["com.whale.vmnetd": "identifier"]] as [String: Any]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+            .write(to: bundle.appendingPathComponent("Contents/Info.plist"))
+
+        let vmnetd = try write("PrivilegedHelperTools/com.whale.vmnetd", base: system)
+        let socket = try write("PrivilegedHelperTools/com.whale.socket", base: system)
+        try write("PrivilegedHelperTools/com.whale.otherproduct", base: system)
+        try writeJob("LaunchDaemons/com.whale.vmnetd.plist", label: "com.whale.vmnetd", extra: ["Program": vmnetd.path])
+        try writeJob("LaunchDaemons/com.whale.socket.plist", label: "com.whale.socket", extra: ["Program": socket.path])
+        try writeJob("LaunchDaemons/com.whale.otherproduct.plist", label: "com.whale.otherproduct",
+                     extra: ["Program": system.appendingPathComponent("PrivilegedHelperTools/com.whale.otherproduct").path])
+        try writeJob("LaunchDaemons/com.other.whale.plist", label: "com.other.whale", extra: ["Program": "/opt/whale"])
+
+        let app = AppInfo(url: bundle, name: "Whale", bundleID: "com.whale.desktop", version: "1", size: 0, lastUsed: nil)
+        let names = Set(AppInventory.leftovers(for: app, home: home, systemRoot: system).map(\.url.lastPathComponent))
+        XCTAssertEqual(names, ["com.whale.vmnetd", "com.whale.vmnetd.plist", "com.whale.socket", "com.whale.socket.plist"])
+    }
+
+    func testAppleAppsGetNoSystemItems() throws {
+        try write("Application Support/Xcode/x", base: system)
+        try write("Preferences/com.apple.dt.Xcode.plist", base: system)
+        let xcode = AppInfo(url: URL(fileURLWithPath: "/Applications/Xcode.app"), name: "Xcode",
+                            bundleID: "com.apple.dt.Xcode", version: "1", size: 0, lastUsed: nil)
+        XCTAssertTrue(AppInventory.leftovers(for: xcode, home: home, systemRoot: system).isEmpty)
+    }
+
+    func testSystemItemGuardAllowsOnlyDirectChildrenOfKnownFolders() throws {
+        let realGuard = PathGuard(home: home)
+        for path in ["/Library/Application Support/Foo", "/Library/Caches/com.foo", "/Library/Logs/Foo",
+                     "/Library/Preferences/com.foo.plist", "/Library/PrivilegedHelperTools/com.foo.helper",
+                     "/Library/LaunchDaemons/com.foo.plist", "/Library/LaunchAgents/com.foo.plist"] {
+            XCTAssertNoThrow(try realGuard.checkSystemItem(URL(fileURLWithPath: path)), path)
+        }
+        for path in ["/Library", "/Library/Application Support", "/Library/Application Support/Foo/inner",
+                     "/Library/Application Support/com.apple.TCC", "/Library/Preferences/com.apple.foo.plist",
+                     "/Library/Keychains/System.keychain", "/Library/LaunchDaemons/notes.txt", "/System/Library/Caches/x",
+                     "/Library/Caches/../Keychains", "/usr/bin/true", "/etc/hosts", "/Applications/Foo.app"] {
+            XCTAssertThrowsError(try realGuard.checkSystemItem(URL(fileURLWithPath: path)), path)
+        }
+        // The general gate stays closed to these paths, so no scan result can reach them.
+        XCTAssertThrowsError(try realGuard.check(URL(fileURLWithPath: "/Library/Application Support/Foo")))
+    }
+
+    private func runInShell(_ command: String) -> Shell.Output { Shell.run("/bin/sh", ["-c", command]) }
+
+    func testUninstallMovesSystemItemsThroughOnePasswordPrompt() throws {
+        // A hostile name has to stay one argument to the root command.
+        let hostile = try write("Application Support/com.cleanmac-test.foo'; touch pwned; '\"$(touch pwned)", base: system)
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        let user = try write("Library/Caches/com.cleanmac-test.foo/x")
+        let bundle = try write("Applications/Foo.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+
+        var prompts = 0
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).uninstall(
+            app: (bundle, 10),
+            leftovers: [LeftoverItem(url: hostile, size: 1, isSystem: true), LeftoverItem(url: helper, size: 2, isSystem: true),
+                        LeftoverItem(url: user.deletingLastPathComponent(), size: 3)],
+            runAsAdmin: { prompts += 1; return self.runInShell("cd '\(self.sandbox.path)'; \($0)") }
+        ))
+        XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(result.count, 4, "\(result.failures)")
+        XCTAssertEqual(result.bytes, 16)
+        XCTAssertTrue(result.failures.isEmpty)
+        for url in [hostile, helper, user, bundle] { XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), url.path) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent(".Trash/com.vendor.helper").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sandbox.appendingPathComponent("pwned").path), "the name ran as a command")
+        for url in result.trashedURLs { try? FileManager.default.removeItem(at: url) }
+    }
+
+    func testCancellingThePasswordRemovesNothing() throws {
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        let user = try write("Library/Caches/com.cleanmac-test.foo/x")
+        let bundle = try write("Applications/Foo.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+        let result = Cleaner(home: home, systemRoot: system).uninstall(
+            app: (bundle, 10),
+            leftovers: [LeftoverItem(url: helper, size: 2, isSystem: true), LeftoverItem(url: user, size: 3)],
+            runAsAdmin: { _ in Shell.Output(status: 1, out: "", err: "execution error: User canceled. (-128)") }
+        )
+        XCTAssertNil(result)
+        for url in [helper, user, bundle] { XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path) }
+    }
+
+    func testSystemItemThatDidNotMoveIsReportedAsFailed() throws {
+        let helper = try write("PrivilegedHelperTools/com.vendor.helper", base: system)
+        let bundle = try write("Applications/Foo.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).uninstall(
+            app: (bundle, 10), leftovers: [LeftoverItem(url: helper, size: 2, isSystem: true)],
+            runAsAdmin: { _ in Shell.Output(status: 0, out: "mv: Operation not permitted", err: "") }
+        ))
+        XCTAssertEqual(result.count, 1, "the app still moved")
+        XCTAssertEqual(result.failures.map(\.path), [helper.path])
+        XCTAssertEqual(result.failures.first?.message, "mv: Operation not permitted")
+        for url in result.trashedURLs { try? FileManager.default.removeItem(at: url) }
+    }
+
+    func testListedSystemItemOutsideTheGuardIsRefused() throws {
+        let bundle = try write("Applications/Foo.app/Contents/Info.plist").deletingLastPathComponent().deletingLastPathComponent()
+        var commands: [String] = []
+        let result = try XCTUnwrap(Cleaner(home: home, systemRoot: system).uninstall(
+            app: (bundle, 10), leftovers: [LeftoverItem(url: URL(fileURLWithPath: "/usr/bin/true"), size: 2, isSystem: true)],
+            runAsAdmin: { commands.append($0); return self.runInShell($0) }
+        ))
+        XCTAssertTrue(commands.isEmpty, "a refused item never reaches the root command")
+        XCTAssertEqual(result.failures.map(\.path), ["/usr/bin/true"])
+        for url in result.trashedURLs { try? FileManager.default.removeItem(at: url) }
+    }
+
     // MARK: - Startup & security
 
     func testStartupPlistParsing() throws {

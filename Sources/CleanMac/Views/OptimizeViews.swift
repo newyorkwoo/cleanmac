@@ -246,7 +246,11 @@ struct AppsView: View {
             Button(L("移到垃圾桶"), role: .destructive) { if let pendingUninstall { model.uninstall(pendingUninstall) } }
             Button(L("取消"), role: .cancel) {}
         } message: {
-            Text(L("App 和勾選的 %@ 個相關項目會移到垃圾桶，清空前都可以救回。", model.selectedLeftovers.count))
+            if model.selectedSystemCount > 0 {
+                Text(L("App 和勾選的 %@ 個相關項目會移到垃圾桶。其中 %@ 個是系統項目：需要管理者密碼，相關背景服務也會停止，之後放回原位時同樣需要密碼。", model.selectedLeftovers.count, model.selectedSystemCount))
+            } else {
+                Text(L("App 和勾選的 %@ 個相關項目會移到垃圾桶，清空前都可以救回。", model.selectedLeftovers.count))
+            }
         }
     }
 
@@ -275,7 +279,7 @@ struct AppsView: View {
                     FileRow(url: item.url, size: item.size, isOn: Binding(
                         get: { model.selectedLeftovers.contains(item.id) },
                         set: { if $0 { model.selectedLeftovers.insert(item.id) } else { model.selectedLeftovers.remove(item.id) } }
-                    ))
+                    ), needsAdmin: item.isSystem)
                 }
             }
             Divider()
