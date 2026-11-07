@@ -21,7 +21,9 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$iconset")"
 
 identity="$(security find-identity -v -p codesigning | sed -nE 's/.*"(Apple Development:[^"]+)".*/\1/p' | head -1)"
-codesign --force --sign "${identity:--}" "$app"
+# The hardened runtime stops other programs from loading code into CleanMac (DYLD_INSERT_LIBRARIES and
+# the like) and borrowing its Full Disk Access. The entitlements add back only Apple Events.
+codesign --force --options runtime --entitlements Resources/CleanMac.entitlements --sign "${identity:--}" "$app"
 codesign --verify --strict "$app"
 echo "簽署：${identity:-ad-hoc}"
 echo "完成：$PWD/$app"

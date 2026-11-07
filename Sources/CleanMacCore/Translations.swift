@@ -2,6 +2,7 @@
 // Simplified Chinese, Japanese, English, Korean, Latin.
 // Use positional placeholders such as %2$@ when a language needs values in another order.
 let translationTable: [String: [String]] = [
+    "無法移到垃圾桶，項目暫存在：%@": ["无法移到废纸篓，项目暂存在：%@", "ゴミ箱に移動できませんでした。項目は一時的にここにあります：%@", "Couldn't move it to the Trash. It's being kept at: %@", "휴지통으로 옮기지 못했습니다. 항목은 임시로 여기에 있습니다: %@", "In cistam moveri non potuit. Interim hic servatur: %@"],
     "在選單列顯示記憶體用量": ["在菜单栏显示内存用量", "メニューバーにメモリ使用量を表示", "Show memory usage in the menu bar", "메뉴 막대에 메모리 사용량 표시", "Usum memoriae in tabula indicum ostende"],
     "在選單列圖示旁顯示目前的記憶體用量。": ["在菜单栏图标旁显示当前的内存用量。", "メニューバーのアイコンの横に現在のメモリ使用量を表示します。", "Shows current memory usage next to the menu bar icon.", "메뉴 막대 아이콘 옆에 현재 메모리 사용량을 표시합니다.", "Usum memoriae hodiernum iuxta iconem in tabula indicum ostendit."],
     "顯示已使用的記憶體（以百分比表示）": ["显示已使用的内存（以百分比表示）", "使用中のメモリを表示（パーセント）", "Show used memory as a percentage", "사용 중인 메모리 표시(백분율)", "Memoriam adhibitam ut centesimas ostende"],

@@ -124,6 +124,9 @@ public struct CleanResult: Sendable {
 public struct Cleaner: Sendable {
     public let pathGuard: PathGuard
     public let home: URL
+    /// Where root parks items on their way to the Trash. Only root can write to it or its parents,
+    /// so nothing can be swapped in while an item passes through.
+    let stagingFolder: URL
 
     public init(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -131,6 +134,22 @@ public struct Cleaner: Sendable {
     ) {
         self.home = home
         self.pathGuard = PathGuard(home: home, systemRoot: systemRoot)
+        stagingFolder = systemRoot.appendingPathComponent("Application Support/CleanMac/Staging")
+    }
+
+    /// The physical path with every symlink resolved, as `pwd -P` prints it. nil when it doesn't exist.
+    static func physicalPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// Items root may move: system leftovers, and app bundles under /Applications that the user can't
+    /// remove alone. Nothing in the home folder, whose folders the user's own processes could swap.
+    func isAllowedAsAdmin(_ url: URL) -> Bool {
+        if (try? pathGuard.checkSystemItem(url)) != nil { return true }
+        let path = PathGuard.canonical(url).lowercased()
+        return path.hasPrefix("/applications/") && path.hasSuffix(".app") && (try? pathGuard.check(url)) != nil
     }
 
     /// Removes an app and its chosen leftovers. Everything needing a password goes first, so
@@ -161,19 +180,37 @@ public struct Cleaner: Sendable {
 
     /// One command, so there is one password prompt. Items stay owned by root in the Trash so
     /// they still work if put back. Returns nil when the prompt is cancelled.
+    ///
+    /// Root never follows a path the user could change while the prompt is open. It enters each source
+    /// folder with `cd -P` and checks the physical path it landed in, then moves the item by its bare name
+    /// into a root-only staging folder. It then enters the Trash the same way, checks that it is this
+    /// user's, and moves the item in with `mv -n -h`, which neither overwrites nor follows a link planted
+    /// under the destination name.
     public func moveToTrashAsAdmin(_ items: [(url: URL, size: Int64)], run: (String) -> Shell.Output) -> CleanResult? {
         let trash = home.appendingPathComponent(".Trash")
         try? FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let q = Self.shellQuoted
 
         var result = CleanResult()
-        var commands: [String] = []
-        var planned: [(url: URL, size: Int64, destination: URL)] = []
+        guard let trashPath = Self.physicalPath(trash.path) else {
+            for item in items { result.failures.append(.init(path: item.url.path, message: L("無法移到垃圾桶。"))) }
+            return result
+        }
+        let staging = stagingFolder.path
+        let stagingParent = stagingFolder.deletingLastPathComponent().path
+        // Created by root inside a folder only root can write, then checked: no links, owned by whoever runs this.
+        var commands = [
+            "umask 022",
+            "/bin/mkdir -p \(q(staging)) && [ ! -L \(q(stagingParent)) ] && [ ! -L \(q(staging)) ]"
+                + " && [ \"$(/usr/bin/stat -f %u \(q(stagingParent)))\" = \"$(/usr/bin/id -u)\" ]"
+                + " && [ \"$(/usr/bin/stat -f %u \(q(staging)))\" = \"$(/usr/bin/id -u)\" ]"
+                + " && /bin/chmod 755 \(q(stagingParent)) && /bin/chmod 700 \(q(staging)) || exit 1",
+        ]
+        var planned: [(url: URL, size: Int64, destination: URL, parked: String)] = []
         var usedNames: Set<String> = []
         for item in items {
-            do {
-                if (try? pathGuard.checkSystemItem(item.url)) == nil { try pathGuard.check(item.url) }
-            } catch {
-                result.failures.append(.init(path: item.url.path, message: error.localizedDescription))
+            guard isAllowedAsAdmin(item.url), let parent = Self.physicalPath(item.url.deletingLastPathComponent().path) else {
+                result.failures.append(.init(path: item.url.path, message: SafetyError.protectedPath(item.url.path).localizedDescription))
                 continue
             }
             if let stop = stopCommand(for: item.url) { commands.append(stop) }
@@ -182,9 +219,16 @@ public struct Cleaner: Sendable {
                 name += " " + UUID().uuidString.prefix(8)
             }
             usedNames.insert(name)
-            let destination = trash.appendingPathComponent(name)
-            commands.append("/bin/mv -n \(Self.shellQuoted(item.url.path)) \(Self.shellQuoted(destination.path)) 2>&1")
-            planned.append((item.url, item.size, destination))
+            let parked = staging + "/" + UUID().uuidString
+            commands.append(
+                "( cd -P -- \(q(item.url.deletingLastPathComponent().path)) && [ \"$(/bin/pwd -P)\" = \(q(parent)) ]"
+                + " && /bin/mv -n -h -- \(q(item.url.lastPathComponent)) \(q(parked)) )"
+                + " && ( cd -P -- \(q(trash.path)) && [ \"$(/bin/pwd -P)\" = \(q(trashPath)) ]"
+                + " && [ \"$(/usr/bin/stat -f %u .)\" = '\(getuid())' ] && /bin/mv -n -h -- \(q(parked)) \(q("./" + name)) ) 2>&1"
+                // Only root can look inside the staging folder, so root reports what is still there.
+                + "; if [ -e \(q(parked)) ] || [ -L \(q(parked)) ]; then echo \(q(Self.stagedMarker + parked)); fi"
+            )
+            planned.append((item.url, item.size, trash.appendingPathComponent(name), parked))
         }
         guard !planned.isEmpty else { return result }
 
@@ -193,16 +237,26 @@ public struct Cleaner: Sendable {
         if !output.ok, output.err.contains("-128") { return nil }
 
         // The filesystem is the record of what moved, since the command's status covers no single item.
-        let details = (output.err + output.out).trimmingCharacters(in: .whitespacesAndNewlines)
-        for item in planned {
+        func exists(_ path: String) -> Bool {
             var info = stat()
-            if lstat(item.url.path, &info) != 0, errno == ENOENT {
+            return lstat(path, &info) == 0
+        }
+        let staged = Set(output.out.split(separator: "\n").filter { $0.hasPrefix(Self.stagedMarker) }
+            .map { String($0.dropFirst(Self.stagedMarker.count)) })
+        let details = (output.err + output.out).split(separator: "\n").filter { !$0.hasPrefix(Self.stagedMarker) }
+            .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        for item in planned {
+            if exists(item.url.path) {
+                result.failures.append(.init(path: item.url.path, message: details.isEmpty ? L("無法移到垃圾桶。") : details))
+            } else if staged.contains(item.parked) {
+                // It left its place but didn't reach the Trash, so it waits in the staging folder.
+                result.removedPaths.append(item.url.path)
+                result.failures.append(.init(path: item.url.path, message: L("無法移到垃圾桶，項目暫存在：%@", item.parked)))
+            } else {
                 result.count += 1
                 result.bytes += item.size
                 result.removedPaths.append(item.url.path)
                 result.trashedURLs.append(item.destination)
-            } else {
-                result.failures.append(.init(path: item.url.path, message: details.isEmpty ? L("無法移到垃圾桶。") : details))
             }
         }
         return result
@@ -223,6 +277,8 @@ public struct Cleaner: Sendable {
             _ = Shell.run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(job.label)"])
         }
     }
+
+    static let stagedMarker = "cleanmac-staged:"
 
     static func shellQuoted(_ text: String) -> String {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
