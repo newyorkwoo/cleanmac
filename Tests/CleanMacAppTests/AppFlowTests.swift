@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 @testable import CleanMacCore
 import SwiftUI
 import XCTest
@@ -25,6 +26,24 @@ final class AppFlowTests: XCTestCase {
         // Whatever the flows moved to the real Trash goes away with the sandbox.
         for url in app.lastResult?.trashedURLs ?? [] { try? FileManager.default.removeItem(at: url) }
         try? FileManager.default.removeItem(at: sandbox)
+    }
+
+    private func openEvent(launchKind: OSType?) -> NSAppleEventDescriptor {
+        let event = NSAppleEventDescriptor.appleEvent(
+            withEventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEOpenApplication),
+            targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID)
+        )
+        if let launchKind {
+            event.setParam(NSAppleEventDescriptor(enumCode: launchKind), forKeyword: AEKeyword(keyAEPropData))
+        }
+        return event
+    }
+
+    func testOnlyLoginItemLaunchCountsAsHidden() {
+        XCTAssertTrue(isLoginItemLaunch(openEvent(launchKind: OSType(keyAELaunchedAsLogInItem))))
+        XCTAssertFalse(isLoginItemLaunch(openEvent(launchKind: nil)))
+        XCTAssertFalse(isLoginItemLaunch(openEvent(launchKind: OSType(keyAELaunchedAsServiceItem))))
+        XCTAssertFalse(isLoginItemLaunch(nil))
     }
 
     @discardableResult

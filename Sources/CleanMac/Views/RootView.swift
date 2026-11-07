@@ -189,6 +189,7 @@ struct MenuBarView: View {
             row(L("磁碟可用"), formatBytes(memory.disk.available))
             Divider()
             Button(L("開啟 CleanMac")) {
+                NSApp.setActivationPolicy(.regular)
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
