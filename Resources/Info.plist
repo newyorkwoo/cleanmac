@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>zh-Hant</string>
+    <key>CFBundleLocalizations</key><array><string>zh-Hant</string><string>zh-Hans</string><string>ja</string><string>en</string><string>ko</string><string>la</string></array>
+    <key>CFBundleExecutable</key><string>CleanMac</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIdentifier</key><string>com.cleanmac.app</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>CleanMac</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>1.1</string>
+    <key>CFBundleVersion</key><string>2</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>CleanMac 需要透過「系統事件」讀取與移除登入項目，並透過 Finder 清空垃圾桶。</string>
+    <key>NSDesktopFolderUsageDescription</key><string>CleanMac 需要掃瞄桌面以找出大型和重複的檔案。</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>CleanMac 需要掃瞄文件以找出大型和重複的檔案。</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>CleanMac 需要掃瞄下載項目以找出舊安裝檔、大型和重複的檔案。</string>
+</dict>
+</plist>

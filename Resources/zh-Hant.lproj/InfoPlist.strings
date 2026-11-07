@@ -1,0 +1,4 @@
+"NSAppleEventsUsageDescription" = "CleanMac 需要透過「系統事件」讀取與移除登入項目，並透過 Finder 清空垃圾桶。";
+"NSDesktopFolderUsageDescription" = "CleanMac 需要掃瞄桌面以找出大型和重複的檔案。";
+"NSDocumentsFolderUsageDescription" = "CleanMac 需要掃瞄文件以找出大型和重複的檔案。";
+"NSDownloadsFolderUsageDescription" = "CleanMac 需要掃瞄下載項目以找出舊安裝檔、大型和重複的檔案。";

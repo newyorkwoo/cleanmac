@@ -1,0 +1,4 @@
+"NSAppleEventsUsageDescription" = "CleanMac 需要通过“系统事件”读取与移除登录项，并通过访达清倒废纸篓。";
+"NSDesktopFolderUsageDescription" = "CleanMac 需要扫描桌面以找出大型和重复的文件。";
+"NSDocumentsFolderUsageDescription" = "CleanMac 需要扫描文稿以找出大型和重复的文件。";
+"NSDownloadsFolderUsageDescription" = "CleanMac 需要扫描下载项以找出旧安装文件、大型和重复的文件。";

@@ -1,0 +1,4 @@
+"NSAppleEventsUsageDescription" = "CleanMac은 System Events로 로그인 항목을 읽고 제거하며 Finder로 휴지통을 비웁니다.";
+"NSDesktopFolderUsageDescription" = "CleanMac은 대용량 파일과 중복 파일을 찾기 위해 데스크탑을 스캔합니다.";
+"NSDocumentsFolderUsageDescription" = "CleanMac은 대용량 파일과 중복 파일을 찾기 위해 문서를 스캔합니다.";
+"NSDownloadsFolderUsageDescription" = "CleanMac은 오래된 설치 파일, 대용량 파일 및 중복 파일을 찾기 위해 다운로드를 스캔합니다.";

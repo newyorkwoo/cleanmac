@@ -1,0 +1,4 @@
+"NSAppleEventsUsageDescription" = "CleanMac uses System Events to read and remove login items, and Finder to empty the Trash.";
+"NSDesktopFolderUsageDescription" = "CleanMac scans your Desktop to find large and duplicate files.";
+"NSDocumentsFolderUsageDescription" = "CleanMac scans your Documents to find large and duplicate files.";
+"NSDownloadsFolderUsageDescription" = "CleanMac scans your Downloads to find old installers and large or duplicate files.";

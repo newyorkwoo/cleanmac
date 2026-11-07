@@ -1,0 +1,4 @@
+"NSAppleEventsUsageDescription" = "CleanMac は「System Events」でログイン項目の読み込みと削除を行い、Finder でゴミ箱を空にします。";
+"NSDesktopFolderUsageDescription" = "CleanMac は大きなファイルや重複ファイルを探すためにデスクトップをスキャンします。";
+"NSDocumentsFolderUsageDescription" = "CleanMac は大きなファイルや重複ファイルを探すために書類をスキャンします。";
+"NSDownloadsFolderUsageDescription" = "CleanMac は古いインストーラ、大きなファイル、重複ファイルを探すためにダウンロードをスキャンします。";
