@@ -419,6 +419,12 @@ final class AppFlowTests: XCTestCase {
         XCTAssertNotNil(movies, "a file that wasn't removed stays on the disk map")
     }
 
+    func testVersionText() {
+        XCTAssertEqual(versionText(["CFBundleShortVersionString": "1.2", "CFBundleVersion": "3"]), "1.2 (3)")
+        XCTAssertEqual(versionText(["CFBundleShortVersionString": "1.2"]), "1.2")
+        XCTAssertEqual(versionText([:]), "?", "swift run has no Info.plist")
+    }
+
     func testRemainingPagesRender() async throws {
         await app.memory.refresh()
         XCTAssertFalse(app.memory.processes.isEmpty)

@@ -173,6 +173,7 @@ let translationTable: [String: [String]] = [
     "無法變更「%@」：%@": ["无法更改“%@”：%@", "「%@」を変更できません：%@", "Couldn't change %@: %@", "'%@'을(를) 변경할 수 없습니다: %@", "%@ mutari non potest: %@"],
     "無法釋放記憶體。": ["无法释放内存。", "メモリを解放できません。", "Couldn't free memory.", "메모리를 확보할 수 없습니다.", "Memoria liberari non potest."],
     "無法釋放記憶體：%@": ["无法释放内存：%@", "メモリを解放できません：%@", "Couldn't free memory: %@", "메모리를 확보할 수 없습니다: %@", "Memoria liberari non potest: %@"],
+    "版本 %@": ["版本 %@", "バージョン %@", "Version %@", "버전 %@", "Versio %@"],
     "用裝置端影像分析找出近乎相同的照片，資料不會上傳。「照片」App 的圖庫不會被掃瞄，請在「照片」中管理。": ["用设备端图像分析找出几乎相同的照片，数据不会上传。“照片”App 的图库不会被扫描，请在“照片”中管理。", "デバイス上の画像分析でほぼ同じ写真を探します。データはアップロードされません。「写真」App のライブラリはスキャンされないので、「写真」で管理してください。", "On-device image analysis finds nearly identical photos, and nothing is uploaded. Your Photos library isn't scanned, so manage it in the Photos app.", "기기 내 이미지 분석으로 거의 같은 사진을 찾으며 데이터는 업로드되지 않습니다. '사진' 앱의 보관함은 스캔하지 않으니 '사진' 앱에서 관리하세요.", "Analysis in machina imagines paene easdem invenit; nihil mittitur. Bibliotheca Photos non scrutatur; eam in Photos rege."],
     "由大到小": ["从大到小", "大きい順", "Largest first", "큰 순서", "A maximis"],
     "由舊到新": ["从旧到新", "古い順", "Oldest first", "오래된 순서", "A vetustissimis"],
